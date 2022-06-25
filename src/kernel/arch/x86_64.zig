@@ -79,7 +79,16 @@ pub export fn start(stivale2_struct_address: u64) noreturn {
 
     // TODO:
     NVMe.find_and_init(&PCI.controller) catch @panic("nvme drive not found");
-    _ = NVMe.controller.access(0, 0x3000, .read);
+    var buffer = kernel.DMA.Buffer{
+        .address = kernel.core_heap.allocate_extended(0x4000, kernel.arch.page_size) orelse @panic("unable to allocate for file"),
+        .total_size = 0x4000,
+        .completed_size = 0,
+    };
+    _ = NVMe.controller.access(NVMe.controller.drives[0], &buffer, NVMe.DiskWork{
+        .size = 0x1000,
+        .offset = 0,
+        .operation = .read,
+    });
     asm volatile ("int $0x40");
     //kernel.scheduler.yield(undefined);
 

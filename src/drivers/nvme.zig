@@ -1,13 +1,52 @@
-// This has been implemented with NVMe Specification 2.0b
+// This has been implemented with NVMe Specification 1.4c
 const kernel = @import("../kernel/kernel.zig");
 const log = kernel.log.scoped(.NVMe);
 const TODO = kernel.TODO;
 const PCI = @import("pci.zig");
+const DMA = @import("dma.zig");
 
 const x86_64 = @import("../kernel/arch/x86_64.zig");
+const Physical = kernel.Physical;
+const Virtual = kernel.Virtual;
 
 const NVMe = @This();
 pub var controller: NVMe = undefined;
+
+const Admin = struct {
+    submission_queue: AdminSubmissionQueue,
+    completion_queue: AdminCompletionQueue,
+};
+
+const IO = struct {
+    submission_queue: IOSubmissionQueue,
+    completion_queue: IOCompletionQueue,
+    lock: kernel.Spinlock,
+};
+
+const AdminSubmissionQueue = struct {
+    ptr: ?[*]u8,
+    tail: u32,
+};
+
+const IOSubmissionQueue = struct {
+    ptr: ?[*]u8,
+    tail: u32,
+    head: u32,
+};
+
+const AdminCompletionQueue = struct {
+    ptr: ?[*]u8,
+    head: u32,
+    last_result: u32,
+    last_status: u16,
+    phase: bool,
+};
+
+const IOCompletionQueue = struct {
+    ptr: ?[*]u8,
+    head: u32,
+    phase: bool,
+};
 
 device: *PCI.Device,
 capabilities: CAP,
@@ -19,23 +58,12 @@ rtd3_entry_latency_us: u32,
 maximum_data_outstanding_commands: u16,
 model: [40]u8,
 
-admin_submission_queue: [*]u8,
-admin_completion_queue: [*]u8,
-admin_completion_queue_head: u32,
-admin_submission_queue_tail: u32,
-admin_completion_queue_phase: bool,
-admin_completion_queue_last_result: u32,
-admin_completion_queue_last_status: u16,
+admin: Admin,
+io: IO,
 
-io_submission_queue: ?[*]u8,
-io_completion_queue: ?[*]u8,
-io_completion_queue_head: u32,
-io_submission_queue_tail: u32,
-io_submission_queue_head: u32,
-io_completion_queue_phase: bool,
-
-prp_list_pages: [io_queue_entry_count]kernel.Physical.Address,
-prp_list_virtual: kernel.Virtual.Address,
+prp_list_pages: [io_queue_entry_count]Physical.Address,
+prp_list_virtual: Virtual.Address,
+drives: []Drive,
 
 const general_timeout = 5000;
 const admin_queue_entry_count = 2;
@@ -154,38 +182,64 @@ pub fn issue_admin_command(nvme: *NVMe, command: *Command, result: ?*u32) bool {
 
 const sector_size = 0x200;
 
-const Operation = enum {
+pub const Operation = enum {
     read,
     write,
 };
-pub fn access(nvme: *NVMe, byte_offset: u64, byte_count: u64, operation: Operation) bool {
-    // TODO: @Lock
+
+pub const DiskWork = struct {
+    size: u64,
+    offset: u64,
+    operation: Operation,
+};
+
+const Drive = struct {
+    nsid: u32,
+};
+
+pub fn access(nvme: *NVMe, drive: NVMe.Drive, buffer: *DMA.Buffer, disk_work: DiskWork) bool {
+    const completed_size = buffer.completed_size;
+    const first_segment = buffer.next_segment(.can_write);
+    const prp1_physical_address = first_segment.address;
+    var prp2_physical_address = Physical.Address.temporary_invalid();
+    const is_last = completed_size + first_segment.size == buffer.total_size;
+    if (!is_last) {
+        const second_segment = buffer.next_segment(.cannot_write);
+        const second_segment_last = buffer.completed_size + second_segment.size == buffer.total_size;
+        if (second_segment_last) {
+            prp2_physical_address = second_segment.address;
+        }
+    }
+
+    nvme.io.lock.acquire();
+    // TODO: @Multithread
     const new_tail = (nvme.io_submission_queue_tail + 1) % io_queue_entry_count;
     const submission_queue_full = new_tail == nvme.io_submission_queue_head;
 
     if (!submission_queue_full) {
-        const sector_offset = byte_offset / sector_size;
-        const sector_count = byte_count / sector_size;
+        const sector_offset = disk_work.byte_offset / sector_size;
+        const sector_count = disk_work.byte_count / sector_size;
         _ = sector_offset;
         _ = sector_count;
 
-        const prp1_physical_address = kernel.Physical.Memory.allocate_pages(1) orelse @panic("ph");
-        const prp1_virtual_address = prp1_physical_address.to_higher_half_virtual_address();
-        kernel.address_space.map(prp1_physical_address, prp1_virtual_address, kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
-        // if (!prp2)
-        // TODO: @Hack
-        var prp2_physical_address: kernel.Physical.Address = undefined;
-        if (true) {
-            prp2_physical_address = nvme.prp_list_pages[nvme.io_submission_queue_tail];
-            kernel.address_space.map(prp2_physical_address, nvme.prp_list_virtual, kernel.Virtual.AddressSpace.Flags.from_flags(&.{.read_write}));
-            const index = 0;
-            nvme.prp_list_virtual.access([*]kernel.Virtual.Address)[index] = kernel.address_space.allocate(0x1000) orelse @panic("asdjkajsdk");
+        if (!prp2_physical_address.is_valid()) {
+            prp2_physical_address = nvme.prp_list_pages[nvme.io.submission_queue.tail];
+            kernel.address_space.map(prp2_physical_address, nvme.prp_list_virtual, Virtual.AddressSpace.Flags.from_flags(&.{.read_write}));
+
+            var index: u64 = 0;
+            while (buffer.completed_size < buffer.total_size) : (index += 1) {
+                if (index == kernel.arch.page_size / @sizeOf(u64)) {
+                    @panic("out of bounds");
+                }
+
+                nvme.prp_list_virtual[index] = buffer.next_segment(.can_write).address.identity_virtual_address();
+            }
         }
 
         var command = @ptrCast(*Command, @alignCast(@alignOf(Command), &nvme.io_submission_queue.?[nvme.io_submission_queue_tail * submission_queue_entry_bytes]));
-        command[0] = (nvme.io_submission_queue_tail << 16) | @as(u32, if (operation == .write) 0x01 else 0x02);
+        command[0] = (nvme.io_submission_queue_tail << 16) | @as(u32, if (disk_work.operation == .write) 0x01 else 0x02);
         // TODO:
-        command[1] = device_nsid;
+        command[1] = drive.nsid;
         command[2] = 0;
         command[3] = 0;
         command[4] = 0;
@@ -225,8 +279,6 @@ pub fn access(nvme: *NVMe, byte_offset: u64, byte_count: u64, operation: Operati
 
     return true;
 }
-
-pub var device_nsid: u32 = 0;
 
 pub fn init(nvme: *NVMe) void {
     nvme.capabilities = nvme.read(cap);
@@ -292,7 +344,7 @@ pub fn init(nvme: *NVMe) void {
     const admin_submission_queue_size = admin_queue_entry_count * submission_queue_entry_bytes;
     const admin_completion_queue_size = admin_queue_entry_count * completion_queue_entry_bytes;
     const admin_queue_page_count = kernel.align_forward(admin_submission_queue_size, kernel.arch.page_size) + kernel.align_forward(admin_completion_queue_size, kernel.arch.page_size);
-    const admin_queue_physical_address = kernel.Physical.Memory.allocate_pages(admin_queue_page_count) orelse @panic("admin queue");
+    const admin_queue_physical_address = Physical.Memory.allocate_pages(admin_queue_page_count) orelse @panic("admin queue");
     const admin_submission_queue_physical_address = admin_queue_physical_address;
     const admin_completion_queue_physical_address = admin_queue_physical_address.offset(kernel.align_forward(admin_submission_queue_size, kernel.arch.page_size));
 
@@ -307,8 +359,8 @@ pub fn init(nvme: *NVMe) void {
 
     const admin_submission_queue_virtual_address = admin_submission_queue_physical_address.to_higher_half_virtual_address();
     const admin_completion_queue_virtual_address = admin_completion_queue_physical_address.to_higher_half_virtual_address();
-    kernel.address_space.map(admin_submission_queue_physical_address, admin_submission_queue_virtual_address, kernel.Virtual.AddressSpace.Flags.from_flags(&.{.read_write}));
-    kernel.address_space.map(admin_completion_queue_physical_address, admin_completion_queue_virtual_address, kernel.Virtual.AddressSpace.Flags.from_flags(&.{.read_write}));
+    kernel.address_space.map(admin_submission_queue_physical_address, admin_submission_queue_virtual_address, Virtual.AddressSpace.Flags.from_flags(&.{.read_write}));
+    kernel.address_space.map(admin_completion_queue_physical_address, admin_completion_queue_virtual_address, Virtual.AddressSpace.Flags.from_flags(&.{.read_write}));
 
     nvme.admin_submission_queue = admin_submission_queue_virtual_address.access([*]u8);
     nvme.admin_completion_queue = admin_completion_queue_virtual_address.access([*]u8);
@@ -338,9 +390,9 @@ pub fn init(nvme: *NVMe) void {
     nvme.write(intmc, 1 << 0);
 
     // TODO: @Hack remove that 3 for a proper value
-    const identify_data_physical_address = kernel.Physical.Memory.allocate_pages(3) orelse @panic("identify");
+    const identify_data_physical_address = Physical.Memory.allocate_pages(3) orelse @panic("identify");
     const identify_data_virtual_address = identify_data_physical_address.to_higher_half_virtual_address();
-    kernel.address_space.map(identify_data_physical_address, identify_data_virtual_address, kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
+    kernel.address_space.map(identify_data_physical_address, identify_data_virtual_address, Virtual.AddressSpace.Flags.from_flag(.read_write));
     const identify_data = identify_data_virtual_address.access([*]u8);
 
     {
@@ -389,10 +441,10 @@ pub fn init(nvme: *NVMe) void {
     {
         const size = kernel.align_forward(io_queue_entry_count * completion_queue_entry_bytes, kernel.arch.page_size);
         const page_count = kernel.bytes_to_pages(size, true);
-        const queue_physical_address = kernel.Physical.Memory.allocate_pages(page_count) orelse @panic("ph comp");
+        const queue_physical_address = Physical.Memory.allocate_pages(page_count) orelse @panic("ph comp");
 
-        const physical_region = kernel.Physical.Memory.Region.new(queue_physical_address, size);
-        physical_region.map(&kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
+        const physical_region = Physical.Memory.Region.new(queue_physical_address, size);
+        physical_region.map(&kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), Virtual.AddressSpace.Flags.from_flag(.read_write));
         nvme.io_completion_queue = queue_physical_address.to_higher_half_virtual_address().access([*]u8);
 
         var command = kernel.zeroes(Command);
@@ -408,10 +460,10 @@ pub fn init(nvme: *NVMe) void {
     {
         const size = kernel.align_forward(io_queue_entry_count * submission_queue_entry_bytes, kernel.arch.page_size);
         const page_count = kernel.bytes_to_pages(size, true);
-        const queue_physical_address = kernel.Physical.Memory.allocate_pages(page_count) orelse @panic("ph comp");
+        const queue_physical_address = Physical.Memory.allocate_pages(page_count) orelse @panic("ph comp");
 
-        const physical_region = kernel.Physical.Memory.Region.new(queue_physical_address, size);
-        physical_region.map(&kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
+        const physical_region = Physical.Memory.Region.new(queue_physical_address, size);
+        physical_region.map(&kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), Virtual.AddressSpace.Flags.from_flag(.read_write));
         nvme.io_submission_queue = queue_physical_address.to_higher_half_virtual_address().access([*]u8);
 
         var command = kernel.zeroes(Command);
@@ -426,15 +478,17 @@ pub fn init(nvme: *NVMe) void {
 
     {
         for (nvme.prp_list_pages) |*prp_list_page| {
-            prp_list_page.* = kernel.Physical.Memory.allocate_pages(1) orelse @panic("prp physical");
+            prp_list_page.* = Physical.Memory.allocate_pages(1) orelse @panic("prp physical");
         }
 
-        kernel.address_space.map(nvme.prp_list_pages[0], nvme.prp_list_pages[0].to_higher_half_virtual_address(), kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
+        kernel.address_space.map(nvme.prp_list_pages[0], nvme.prp_list_pages[0].to_higher_half_virtual_address(), Virtual.AddressSpace.Flags.from_flag(.read_write));
         nvme.prp_list_virtual = nvme.prp_list_pages[0].to_higher_half_virtual_address();
     }
 
     var nsid: u32 = 0;
-    var device_count: u64 = 0;
+    const expected_drive_count = 1;
+    nvme.drives = kernel.core_heap.allocate_many(Drive, expected_drive_count) orelse @panic("unable to allocate space for drives");
+    var drive_count: u64 = 0;
     namespace: while (true) {
         {
             var command = kernel.zeroes(Command);
@@ -471,16 +525,22 @@ pub fn init(nvme: *NVMe) void {
 
             const sector_bytes_exponent = @truncate(u5, lba_format >> 16);
             if (sector_bytes_exponent < 9 or sector_bytes_exponent > 16) continue;
+            if (drive_count > expected_drive_count - 1) {
+                @panic("Found more devices than expected");
+            }
             const sector_bytes = @as(u64, 1) << sector_bytes_exponent;
             log.debug("sector bytes: {}", .{sector_bytes});
 
-            device_nsid = nsid;
-            device_count += 1;
+            var drive = &nvme.drives[drive_count];
+            drive.* = Drive{
+                .nsid = nsid,
+            };
+            drive_count += 1;
             log.debug("Device NSID: {}", .{nsid});
         }
     }
 
-    kernel.assert(@src(), device_count == 1);
+    kernel.assert(@src(), drive_count <= expected_drive_count);
 }
 
 pub const Callback = fn (nvme: *NVMe, line: u64) bool;
@@ -544,48 +604,7 @@ const DataTransfer = enum(u2) {
     bidirectional = 3,
 };
 
-fn SubmissionQueueEntry(comptime Opcode: type) type {
-    return packed struct {
-        command_dword0: CommandDword0(Opcode),
-    };
-}
-
-fn CommandDword0(comptime Opcode: type) type {
-    return packed struct {
-        opcode: Opcode,
-        fuse: FUSE,
-        reserved: u4,
-        psdt: PSDT,
-        cid: u16,
-
-        const FUSE = enum(u2) {
-            normal = 0,
-            fuse_first_command = 1,
-            fuse_second_command = 2,
-            reserved = 3,
-        };
-
-        const PSDT = enum(u2) {
-            prps_used = 0,
-            sgls_buffer = 1,
-            sgls_segment = 2,
-            reserved = 3,
-        };
-
-        comptime {
-            kernel.assert_unsafe(@sizeOf(CommandDword0) == @sizeOf(u32));
-        }
-    };
-}
-
-const QueueType = enum(u2) {
-    admin = 0,
-    fabrics = 1,
-    io = 2,
-
-    const count = kernel.enum_values(QueueType).len;
-};
-const AdminOpcode = enum(u8) {
+const AdminCommandOpcode = enum(u8) {
     delete_io_submission_queue = 0x00,
     create_io_submission_queue = 0x01,
     get_log_page = 0x02,
@@ -610,253 +629,21 @@ const AdminOpcode = enum(u8) {
     capacity_management = 0x20,
     lockdown = 0x24,
     doorbell_buffer_config = 0x7c,
-    fabrics_commands = 0x7f,
-    format_nvm = 0x80,
-    security_send = 0x81,
-    security_receive = 0x82,
-    sanitize = 0x84,
-    get_lba_status = 0x86,
-
-    pub inline fn is_generic_command(opcode: @This()) bool {
-        return opcode & 0b10000000 != 0;
-    }
-
-    pub inline fn get_data_transfer(opcode: @This()) DataTransfer {
-        return @intToEnum(DataTransfer, @truncate(u2, @enumToInt(opcode)));
-    }
-
-    pub inline fn get_function(opcode: @This()) u5 {
-        return @truncate(u5, (@enumToInt(opcode) & 0b01111100) >> 2);
-    }
-};
-const FabricsOpcode = enum(u8) {
-    property_set = 0x00,
-    connect = 0x01,
-    property_get = 0x04,
-    authentication_send = 0x05,
-    authentication_receive = 0x06,
-    disconnect = 0x08,
 };
 
-const IOOpcode = enum(u8) {
+const NVMCommandOpcode = enum(u8) {
     flush = 0x00,
+    write = 0x01,
+    read = 0x02,
+    write_uncorrectable = 0x04,
+    compare = 0x05,
+    write_zeroes = 0x08,
+    dataset_management = 0x09,
+    verify = 0x0c,
     reservation_register = 0x0d,
     reservation_report = 0x0e,
     reservation_acquire = 0x11,
     reservation_release = 0x15,
-
-    _,
-};
-
-const opcodes = [QueueType.count]type{
-    AdminOpcode,
-    FabricsOpcode,
-    IOOpcode,
-};
-
-const AdminCommonCommandFormat = packed struct {
-    command_dword0: CommandDword0(AdminOpcode),
-    nsid: u4,
-    reserved: u8,
-    // == Same as Common ==
-    mptr: u8,
-    dptr: u16,
-    // == Same as Common ==
-    ndt: u4,
-    ndm: u4,
-    command_dword12: u4,
-    command_dword13: u4,
-    command_dword14: u4,
-    command_dword15: u4,
-
-    comptime {
-        kernel.assert_unsafe(@sizeOf(AdminCommonCommandFormat) == @sizeOf(u64));
-    }
-};
-
-const CommonCompletionQueueEntry = packed struct {
-    dw0: u32,
-    dw1: u32,
-    dw2: DW2,
-
-    const DW2 = packed struct {
-        sqhp: u16,
-        sqid: u16,
-
-        comptime {
-            kernel.assert_unsafe(@sizeOf(DW2) == @sizeOf(u32));
-        }
-    };
-
-    const DW3 = packed struct {
-        cid: u16,
-        phase_tag: bool,
-        status_field: StatusField,
-
-        comptime {
-            kernel.assert_unsafe(@sizeOf(DW3) == @sizeOf(u32));
-        }
-    };
-
-    const StatusField = packed struct {
-        sc: u8,
-        sct: u3,
-        crd: u2,
-        more: bool,
-        dnr: bool,
-    };
-
-    const GenericCommandStatus = enum(u8) {
-        successful_completion = 0x00,
-        invalid_command_opcode = 0x01,
-        invalid_field_in_command = 0x02,
-        command_id_conflict = 0x03,
-        data_transfer_error = 0x04,
-        commmands_aborted_due_to_power_loss_notification = 0x05,
-        internal_error = 0x06,
-        command_abort_requested = 0x07,
-        command_aborted_due_to_sq_deletion = 0x08,
-        command_aborted_due_to_failed_fused_command = 0x09,
-        command_aborted_due_to_missing_fused_command = 0x0a,
-        invalid_namespace_or_format = 0x0b,
-        command_sequence_error = 0x0c,
-        invalid_sgl_segment_descriptor = 0x0d,
-        invalid_number_of_sgl_descriptors = 0x0e,
-        data_sgl_length_invalid = 0x0f,
-        metadata_sgl_length_invalid = 0x10,
-        sgl_descriptor_type_invalid = 0x11,
-        invalid_use_of_controller_memory_buffer = 0x12,
-        prp_offset_invalid = 0x13,
-        atomic_write_unit_exceeded = 0x14,
-        operation_denied = 0x15,
-        sgl_offset_invalid = 0x16,
-        reserved = 0x17,
-        host_identifier_inconsistent_format = 0x18,
-        keep_alive_timer_expired = 0x19,
-        keep_alive_timeout_invalid = 0x1a,
-        command_aborted_due_to_preempt_and_abort = 0x1b,
-        sanitize_failed = 0x1c,
-        sanitize_in_progress = 0x1d,
-        sgl_data_block_glanularity_invalid = 0x1e,
-        command_not_supported_for_queue_in_cmb = 0x1f,
-        namespace_is_write_protected = 0x20,
-        command_interrupted = 0x21,
-        transient_transport_error = 0x22,
-        command_prohibited_by_command_and_feature_lockdown = 0x23,
-        admin_command_media_not_ready = 0x24,
-        lba_out_of_range = 0x80,
-        capacity_exceeded = 0x81,
-        namespace_not_ready = 0x82,
-        reservation_conflict = 0x83,
-        format_in_progress = 0x84,
-        invalid_value_size = 0x85,
-        invalid_key_size = 0x86,
-        kv_key_does_not_exist = 0x87,
-        unrecovered_error = 0x88,
-        key_exists = 0x89,
-        _,
-    };
-
-    const CommandSpecificStatus = enum(u8) {
-        completion_queue_invalid = 0x00,
-        invalid_queue_identifier = 0x01,
-        invalid_queue_size = 0x02,
-        abort_command_limit_exceeded = 0x03,
-        reserved = 0x04,
-        asynchronous_event_request_limi_exceeded = 0x05,
-        invalid_firmware_slot = 0x06,
-        invalid_firmware_image = 0x07,
-        invalid_interrupt_vector = 0x08,
-        invalid_log_page = 0x09,
-        invalid_format = 0x0a,
-        firmware_activation_requires_conventional_reset = 0x0b,
-        invalid_queue_deletion = 0x0c,
-        feature_identifier_not_saveable = 0x0d,
-        feature_not_changeable = 0x0e,
-        feature_not_namespace_specific = 0x0f,
-        firmware_activation_requires_nvm_subsystem_reset = 0x10,
-        firmware_activation_requires_controller_level_reset = 0x11,
-        firmware_activation_requires_maximum_time_violation = 0x12,
-        firmware_activation_prohibited = 0x13,
-        overlapping_range = 0x14,
-        namespace_insufficient_capacity = 0x15,
-        namespace_identifier_unavailable = 0x16,
-        reserved = 0x17,
-        namespace_already_attached = 0x18,
-        namespace_is_private = 0x19,
-        namespace_not_attached = 0x1a,
-        thin_provisioning_not_supported = 0x1b,
-        controller_list_invalid = 0x1c,
-        device_self_test_in_progress = 0x1d,
-        boot_partition_write_prohibited = 0x1e,
-        invalid_controller_identifier = 0x1f,
-        invalid_secondary_controller_state = 0x20,
-        invalid_number_of_controller_resources = 0x21,
-        invalid_resource_identifier = 0x22,
-        sanitize_prohibited_while_persistent_memory_region_is_enabled = 0x23,
-        ana_group_identifier_invalid = 0x24,
-        ana_attach_failed = 0x25,
-        insufficient_capacity = 0x26,
-        namespace_attachment_limit_exceeded = 0x27,
-        prohibition_of_command_execution_not_supported = 0x28,
-        io_command_set_not_supported = 0x29,
-        io_command_set_not_enabled = 0x2a,
-        io_command_set_combination_rejected = 0x2b,
-        invalid_io_command_set = 0x2c,
-        identifier_unavailable = 0x2d,
-        _,
-    };
-
-    const IOCommandSpecificStatus = enum(u8) {
-        conflicting_attributes = 0x80,
-        invalid_protection_information = 0x81,
-        attempted_write_to_read_only_range = 0x82,
-        command_size_limit_exceeded = 0x83,
-        _,
-        zoned_boundary_error = 0xb8,
-        zone_is_full = 0xb9,
-        zone_is_read_only = 0xba,
-        zone_is_offline = 0xbb,
-        zone_invalid_write = 0xbc,
-        too_many_active_zones = 0xbd,
-        too_many_open_zones = 0xbe,
-        invalid_zone_state_transition = 0xbf,
-    };
-
-    const FabricsCommandSpecificStatus = enum(u8) {
-        incompatible_format = 0x80,
-        controller_busy = 0x81,
-        connect_invalid_parameters = 0x82,
-        connected_restar_discovery = 0x83,
-        connect_invalid_host = 0x84,
-        invalid_queue_type = 0x85,
-        discover_restart = 0x90,
-        authentication_required = 0x91,
-    };
-
-    const MediaAndDataIntegrityError = enum(u8) {
-        write_fault = 0x80,
-        unrecovered_read_error = 0x81,
-        end_to_end_guard_check_error = 0x82,
-        end_to_end_application_tag_check_error = 0x83,
-        end_to_end_reference_tag_check_error = 0x84,
-        compare_failure = 0x85,
-        access_denied = 0x86,
-        deallocated_or_unwritten_logical_block = 0x87,
-        end_to_end_storage_tag_check_error = 0x88,
-    };
-
-    const PathRelatedStatus = enum(u8) {
-        internal_path_error = 0x00,
-        asymmetric_access_persistent_loss = 0x01,
-        asymmetric_access_inaccessible = 0x02,
-        asymmetric_access_transition = 0x03,
-
-        controller_pathing_error = 0x60,
-
-        host_pathing_error = 0x70,
-        command_aborted_by_host = 0x71,
-    };
 };
 
 const Property = struct {
@@ -881,10 +668,7 @@ const bprsel = Property{ .offset = 0x44, .type = BPRSEL };
 const bpmbl = Property{ .offset = 0x48, .type = BPMBL };
 const cmbmsc = Property{ .offset = 0x50, .type = CMBMSC };
 const cmbsts = Property{ .offset = 0x58, .type = CMBSTS };
-const cmbebs = Property{ .offset = 0x5c, .type = CMBEBS };
-const cmbswtp = Property{ .offset = 0x60, .type = CMBSWTP };
 const nssd = Property{ .offset = 0x64, .type = u32 };
-const crto = Property{ .offset = 0x68, .type = CRTO };
 const pmrcap = Property{ .offset = 0xe00, .type = PMRCAP };
 const pmrctl = Property{ .offset = 0xe04, .type = PMRCTL };
 const pmrsts = Property{ .offset = 0xe08, .type = PMRSTS };
@@ -908,9 +692,6 @@ const CAP = packed struct {
     mpsmax: u4,
     pmrs: bool,
     cmbs: bool,
-    nsss: bool,
-    crwms: bool,
-    crims: bool,
     reserved2: u3,
 
     const CSS = packed struct {
@@ -940,8 +721,7 @@ const CC = packed struct {
     shn: SHN,
     iosqes: u4,
     iocqes: u4,
-    crime: bool,
-    reserved2: u7,
+    reserved2: u8,
 
     const CSS = enum(u3) {
         nvm_command_set = 0b000,
@@ -975,8 +755,7 @@ const CSTS = packed struct {
     shst: SHST,
     nssro: bool,
     pp: bool,
-    st: bool,
-    reserved: u25,
+    reserved: u26,
 
     const SHST = enum(u2) {
         norma_operation = 0,
@@ -1119,52 +898,6 @@ const CMBSTS = packed struct {
     }
 };
 
-const CMBEBS = packed struct {
-    cmbszu: CMBSZU,
-    read_bypass_behavior: bool,
-    reserved: u3,
-    cmbwbz: u24,
-
-    const CMBSZU = enum(u4) {
-        bytes = 0,
-        kib = 1,
-        mib = 2,
-        gib = 3,
-        _,
-    };
-
-    comptime {
-        kernel.assert_unsafe(@sizeOf(CMBEBS) == @sizeOf(u32));
-    }
-};
-
-const CMBSWTP = packed struct {
-    cmbswtu: CMBSWTU,
-    reserved: u4,
-    cmbswtv: u24,
-
-    const CMBSWTU = enum(u4) {
-        bytes_s = 0,
-        kibs_s = 1,
-        mibs_s = 2,
-        gibs_s = 3,
-        _,
-    };
-
-    comptime {
-        kernel.assert_unsafe(@sizeOf(CMBSWTP) == @sizeOf(u32));
-    }
-};
-
-const CRTO = packed struct {
-    crwmt: u16,
-    crimt: u16,
-
-    comptime {
-        kernel.assert_unsafe(@sizeOf(CRTO) == @sizeOf(u32));
-    }
-};
-
 const PMRCAP = packed struct {
     reserved: u3,
     rds: bool,
@@ -1202,9 +935,9 @@ const PMRSTS = packed struct {
     nrdy: bool,
     hsts: HSTS,
     cbai: bool,
-    reserved: u20,
+    reserved: u19,
 
-    const HSTS = enum(u2) {
+    const HSTS = enum(u3) {
         normal = 0,
         restore_error = 1,
         read_only = 2,

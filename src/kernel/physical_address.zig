@@ -19,6 +19,12 @@ pub inline fn new(value: u64) PhysicalAddress {
     return physical_address;
 }
 
+pub fn temporary_invalid() PhysicalAddress {
+    return PhysicalAddress{
+        .value = 0,
+    };
+}
+
 pub inline fn identity_virtual_address(physical_address: PhysicalAddress) Virtual.Address {
     return physical_address.identity_virtual_address_extended(false);
 }
@@ -38,10 +44,12 @@ pub inline fn access(physical_address: PhysicalAddress, comptime Ptr: type) Ptr 
 }
 
 pub inline fn to_higher_half_virtual_address(physical_address: PhysicalAddress) Virtual.Address {
+    kernel.assert(@src(), physical_address.is_valid());
     return Virtual.Address.new(physical_address.value + kernel.higher_half_direct_map.value);
 }
 
 pub inline fn access_higher_half(physical_address: PhysicalAddress, comptime Ptr: type) Ptr {
+    kernel.assert(@src(), physical_address.is_valid());
     return @intToPtr(Ptr, physical_address.to_higher_half_virtual_address().value);
 }
 

@@ -30,6 +30,7 @@ pub const driver = @import("driver.zig");
 pub const Driver = driver.Driver;
 pub const ELF = @import("elf.zig");
 pub const Syscall = @import("syscall.zig");
+pub const DMA = @import("../drivers/dma.zig");
 comptime {
     kernel.reference_all_declarations(Syscall);
 }
