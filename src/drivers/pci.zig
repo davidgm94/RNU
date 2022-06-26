@@ -446,22 +446,17 @@ pub const Device = struct {
 
     pub inline fn read_bar(device: *Device, comptime T: type, index: u64, offset: u64) T {
         const base_address = device.base_addresses[index];
-        log.debug("Base address: 0x{x}", .{base_address});
         if (T != u64) {
             if (base_address & 1 != 0) {
-                log.debug("Using base address for read", .{});
                 const port = @intCast(u16, (base_address & ~@as(u32, 3)) + offset);
                 return kernel.arch.io_read(T, port);
             } else {
-                log.debug("Using base virtual address for read", .{});
                 return device.base_virtual_addresses[index].offset(offset).access(*volatile T).*;
             }
         } else {
             if (base_address & 1 != 0) {
-                log.debug("Using base address for read", .{});
                 return device.read_bar(u32, index, offset) | (@intCast(u64, device.read_bar(u64, index, offset + @sizeOf(u32))) << 32);
             } else {
-                log.debug("Using base virtual address for read", .{});
                 return device.base_virtual_addresses[index].offset(offset).access(*volatile T).*;
             }
         }
@@ -469,25 +464,19 @@ pub const Device = struct {
 
     pub inline fn write_bar(device: *Device, comptime T: type, index: u64, offset: u64, value: T) void {
         const base_address = device.base_addresses[index];
-        log.debug("Base address 0x{x}", .{base_address});
         if (T != u64) {
             if (base_address & 1 != 0) {
                 const port = @intCast(u16, (base_address & ~@as(@TypeOf(base_address), 3)) + offset);
-                log.debug("Writing to port 0x{x}", .{port});
                 kernel.arch.io_write(T, port, value);
             } else {
-                log.debug("index: {}", .{index});
                 const virtual_address = device.base_virtual_addresses[index].offset(offset);
-                log.debug("Virtual address: 0x{x}", .{virtual_address.value});
                 virtual_address.access(*volatile T).* = value;
             }
         } else {
             if (base_address & 1 != 0) {
-                log.debug("here?", .{});
                 device.write_bar(u32, index, offset, @truncate(u32, value));
                 device.write_bar(u32, index, offset + @sizeOf(u32), @truncate(u32, value >> 32));
             } else {
-                log.debug("here?", .{});
                 device.base_virtual_addresses[index].offset(offset).access(*volatile T).* = value;
             }
         }

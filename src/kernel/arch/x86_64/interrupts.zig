@@ -386,7 +386,7 @@ export fn interrupt_handler(context: *Context) align(0x10) callconv(.C) void {
             // TODO: dont hard code
             const handler = irq_handlers[0];
             const result = handler.callback(handler.context, line);
-            kernel.assert(@src(), result);
+            if (!result) log.err("Interrupt couldn't be handled", .{});
             x86_64.get_current_cpu().?.lapic.end_of_interrupt();
         },
         0x80 => {

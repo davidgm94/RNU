@@ -80,12 +80,12 @@ pub export fn start(stivale2_struct_address: u64) noreturn {
     // TODO:
     NVMe.find_and_init(&PCI.controller) catch @panic("nvme drive not found");
     var buffer = kernel.DMA.Buffer{
-        .address = kernel.core_heap.allocate_extended(0x4000, kernel.arch.page_size) orelse @panic("unable to allocate for file"),
-        .total_size = 0x4000,
+        .address = kernel.core_heap.allocate_extended(0x1000, kernel.arch.page_size) orelse @panic("unable to allocate for file"),
+        .total_size = 0x1000,
         .completed_size = 0,
     };
     _ = NVMe.controller.access(NVMe.controller.drives[0], &buffer, NVMe.DiskWork{
-        .size = 0x1000,
+        .size = buffer.total_size,
         .offset = 0,
         .operation = .read,
     });
@@ -1056,7 +1056,6 @@ pub const LAPIC = struct {
 
     pub inline fn end_of_interrupt(lapic: LAPIC) void {
         lapic.write(.EOI, 0);
-        log.debug("LAPIC error status register: 0x{x}", .{lapic.read(.ERROR_STATUS_REGISTER)});
     }
 };
 

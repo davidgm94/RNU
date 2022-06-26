@@ -7,6 +7,13 @@ const AtomicRmwOp = builtin.AtomicRmwOp;
 status: bool,
 were_interrupts_enabled: bool,
 
+pub fn new() Spinlock {
+    return Spinlock{
+        .status = false,
+        .were_interrupts_enabled = false,
+    };
+}
+
 pub fn acquire(spinlock: *volatile Spinlock) void {
     const are_interrupts_enabled = kernel.arch.are_interrupts_enabled();
     kernel.arch.disable_interrupts();

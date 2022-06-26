@@ -6,9 +6,22 @@ const VirtualAddress = @This();
 value: u64,
 
 pub inline fn new(value: u64) VirtualAddress {
-    return VirtualAddress{
+    const result = VirtualAddress{
         .value = value,
     };
+    if (!result.is_valid()) {
+        @panic("invalid virtual address");
+    }
+
+    return result;
+}
+
+pub inline fn temporary_invalid() VirtualAddress {
+    const result = VirtualAddress{
+        .value = 0,
+    };
+
+    return result;
 }
 
 pub inline fn access(virtual_address: VirtualAddress, comptime Ptr: type) Ptr {
@@ -47,10 +60,10 @@ pub inline fn offset_into_page(virtual_address: VirtualAddress) u64 {
     return virtual_address.value & (kernel.arch.page_size - 1);
 }
 
-pub inline fn is_null(virtual_address: VirtualAddress) bool {
-    return virtual_address.value == 0;
+pub inline fn is_valid(virtual_address: VirtualAddress) bool {
+    return virtual_address.value != 0;
 }
 
-pub inline fn translate(virtual_address: VirtualAddress, address_space: *Virtual.Address.Space) Physical.Address {
+pub inline fn translate(virtual_address: VirtualAddress, address_space: *Virtual.AddressSpace) ?Physical.Address {
     return address_space.translate_address(virtual_address);
 }

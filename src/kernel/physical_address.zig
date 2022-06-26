@@ -1,4 +1,5 @@
 const kernel = @import("kernel.zig");
+const log = kernel.log.scoped(.PhysicalAddress);
 const PhysicalAddress = @This();
 const Virtual = kernel.Virtual;
 const Physical = kernel.Physical;
@@ -54,10 +55,16 @@ pub inline fn access_higher_half(physical_address: PhysicalAddress, comptime Ptr
 }
 
 pub inline fn is_valid(physical_address: PhysicalAddress) bool {
-    kernel.assert(@src(), physical_address.value != 0);
-    kernel.assert(@src(), max_bit != 0);
-    kernel.assert(@src(), max > 1000);
-    return physical_address.value <= max;
+    const not_null = physical_address.value != 0;
+    const max_bit_not_set = max_bit != 0;
+    const max_value_valid = max > 1000;
+    const address_below_max_value = physical_address.value <= max;
+    if (!not_null) log.err("Physical address is null", .{});
+    if (!max_bit_not_set) log.err("Max bit for physical address is not set", .{});
+    if (!max_value_valid) log.err("Physical address max value is not valid", .{});
+    if (!address_below_max_value) log.err("Physical address is not below maximum value", .{});
+
+    return not_null and max_bit_not_set and max_value_valid and address_below_max_value;
 }
 
 pub inline fn page_up(physical_address: *PhysicalAddress) void {
