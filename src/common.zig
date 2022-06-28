@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const root = @import("root");
 
 pub const FS = @import("common/fs.zig");
+pub const VirtualAddress = @import("common/virtual_address.zig");
+pub const PhysicalAddress = @import("common/physical_address.zig");
 
 // ARCH
 pub const Cpu = std.Target.Cpu;
@@ -34,7 +36,7 @@ pub const SourceLocation = std.builtin.SourceLocation;
 // ATOMIC
 pub const AtomicRmwOp = std.builtin.AtomicRmwOp;
 pub const AtomicOrder = std.builtin.AtomicOrder;
-pub const spinloop_hint = std.atomic.spinLoopHint;
+//pub const spinloop_hint = std.atomic.spinLoopHint;
 
 // LOG
 pub const log = std.log;
@@ -122,9 +124,16 @@ pub inline fn zeroes(comptime T: type) T {
     return result;
 }
 
-pub inline fn assert(source_location: SourceLocation, condition: bool) void {
-    _ = source_location;
+pub inline fn static_assert(condition: bool) void {
+    if (!is_comptime()) unreachable;
     if (!condition) unreachable;
+}
+
+pub inline fn assert(source_location: SourceLocation, condition: bool) void {
+    if (is_comptime()) unreachable;
+    if (!condition) {
+        panic(source_location, "Assert failed", .{});
+    }
 }
 
 pub const MustBeExact = enum {
@@ -178,24 +187,6 @@ pub fn Bitflag(comptime is_volatile: bool, comptime EnumT: type) type {
             };
             return @This(){ .bits = result };
         }
-
-        //pub inline fn from_flags(flags: []EnumT) @This() {
-        //const flags_type = @TypeOf(flags);
-        //const result = comptime blk: {
-        //const flag_fields = std.meta.fields(flags_type);
-        //if (flag_fields.len > @bitSizeOf(EnumT)) @compileError("More flags than bits\n");
-
-        //var bits: BitFlagIntType = 0;
-
-        //inline for (flag_fields) |flag_field| {
-        //const enum_value: EnumT = @ptrCast(*const EnumT, flag_field.default_value.?).*;
-        //bits |= 1 << @enumToInt(enum_value);
-        //}
-
-        //break :blk bits;
-        //};
-        //return @This(){ .bits = result };
-        //}
 
         pub fn from_bits(bits: BitFlagIntType) @This() {
             return @This(){ .bits = bits };

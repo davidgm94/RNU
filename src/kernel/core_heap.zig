@@ -1,25 +1,25 @@
 const kernel = @import("root");
-const log = kernel.log_scoped(.CoreHeap);
-const TODO = kernel.TODO;
-const Physical = kernel.Physical;
+const common = kernel.common;
+const log = common.log.scoped(.CoreHeap);
+const TODO = common.TODO;
 const Virtual = kernel.Virtual;
 
 const Heap = @This();
 
 pub const Region = struct {
-    virtual: Virtual.Address,
+    virtual: common.VirtualAddress,
     size: u64,
     allocated: u64,
 };
 
-allocator: kernel.Allocator,
+allocator: common.Allocator,
 // TODO: use another synchronization primitive
 lock: kernel.Spinlock,
 regions: [region_count]Region,
 address_space: *Virtual.AddressSpace,
 
-const region_size = 2 * kernel.mb;
-pub const region_count = kernel.core_memory_region.size / region_size;
+const region_size = 2 * common.mb;
+pub const region_count = 0x100000000 / region_size;
 
 pub fn init(heap: *Heap, address_space: *Virtual.AddressSpace) void {
     heap.allocator.ptr = heap;

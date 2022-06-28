@@ -1,7 +1,8 @@
 const kernel = @import("root");
+const common = @import("common");
 const Font = kernel.PSF1.Font;
 
-const log = kernel.log_scoped(.graphics);
+const log = common.log.scoped(.graphics);
 const Driver = @This();
 
 const Type = enum(u64) {

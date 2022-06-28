@@ -1,6 +1,8 @@
 const kernel = @import("root");
-const TODO = kernel.TODO;
-const log = kernel.log_scoped(.Scheduler);
+const common = kernel.common;
+const TODO = common.TODO;
+const log = common.log.scoped(.Scheduler);
+const VirtualAddress = common.VirtualAddress;
 
 const Virtual = kernel.Virtual;
 const PrivilegeLevel = kernel.PrivilegeLevel;
@@ -39,12 +41,12 @@ pub fn yield(context: *Context) noreturn {
 }
 
 pub const Thread = struct {
-    kernel_stack: Virtual.Address,
+    kernel_stack: VirtualAddress,
     privilege_level: PrivilegeLevel,
     type: Type,
-    kernel_stack_base: Virtual.Address,
+    kernel_stack_base: VirtualAddress,
     kernel_stack_size: u64,
-    user_stack_base: Virtual.Address,
+    user_stack_base: VirtualAddress,
     user_stack_reserve: u64,
     user_stack_commit: u64,
     id: u64,

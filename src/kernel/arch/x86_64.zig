@@ -1,4 +1,5 @@
 const kernel = @import("root");
+const common = @import("common");
 const drivers = kernel.drivers;
 const PCI = drivers.PCI;
 const NVMe = drivers.NVMe;
@@ -8,7 +9,9 @@ const Filesystem = drivers.Filesystem;
 const RNUFS = drivers.RNUFS;
 const TODO = kernel.TODO;
 
-const log = kernel.log_scoped(.x86_64);
+const log = common.log.scoped(.x86_64);
+const VirtualAddress = common.VirtualAddress;
+const Bitflag = common.Bitflag;
 
 pub const page_size = kernel.arch.check_page_size(0x1000);
 
@@ -74,8 +77,8 @@ pub export fn start(stivale2_struct_address: u64) noreturn {
     init_scheduler();
     prepare_drivers(rsdp);
     drivers.init() catch |driver_init_error| kernel.crash("Failed to initialize drivers: {}", .{driver_init_error});
-    kernel.assert(@src(), Disk.drivers.items.len > 0);
-    kernel.assert(@src(), Filesystem.drivers.items.len > 0);
+    common.assert(@src(), Disk.drivers.items.len > 0);
+    common.assert(@src(), Filesystem.drivers.items.len > 0);
     register_main_storage();
     _ = kernel.main_storage.read_file_callback(Filesystem.drivers.items[0], "font.psf");
 
@@ -88,7 +91,7 @@ pub export fn start(stivale2_struct_address: u64) noreturn {
             \\cli
             \\hlt
         );
-        kernel.spinloop_hint();
+        asm volatile ("pause" ::: "memory");
     }
 }
 
@@ -96,16 +99,16 @@ fn register_main_storage() void {
     kernel.main_storage = Filesystem.drivers.items[0];
 }
 
-pub fn init_block_drivers(allocator: kernel.Allocator) !void {
+pub fn init_block_drivers(allocator: common.Allocator) !void {
     // TODO: make ACPI and PCI controller standard
     // TODO: make a category for NVMe and standardize it there
     // INFO: this callback also initialize child drives
     NVMe.driver = try NVMe.Initialization.callback(allocator, &PCI.controller);
-    kernel.assert(@src(), Disk.drivers.items.len > 0);
+    common.assert(@src(), Disk.drivers.items.len > 0);
     try drivers.Driver(Filesystem, RNUFS).init(allocator, Disk.drivers.items[0]);
 }
 
-pub fn init_graphics_drivers(allocator: kernel.Allocator) !void {
+pub fn init_graphics_drivers(allocator: common.Allocator) !void {
     _ = allocator;
     log.debug("TODO: initialize graphics drivers", .{});
 }
@@ -196,7 +199,7 @@ pub fn enable_apic() void {
     cpu.lapic = LAPIC.new(Physical.Address.new(apic_physical_address));
     cpu.lapic.write(.SPURIOUS, spurious_value);
     const lapic_id = cpu.lapic.read(.LAPIC_ID);
-    kernel.assert(@src(), lapic_id == cpu.lapic_id);
+    common.assert(@src(), lapic_id == cpu.lapic_id);
     log.debug("APIC enabled", .{});
 }
 
@@ -283,7 +286,7 @@ const Serial = struct {
     };
 
     fn Port(comptime port_number: u8) type {
-        comptime kernel.assert_unsafe(@src(), port_number > 0 and port_number <= 8);
+        comptime common.static_assert(@src(), port_number > 0 and port_number <= 8);
         const port_index = port_number - 1;
 
         return struct {
@@ -798,8 +801,8 @@ fn enable_cpu_features() void {
     );
 
     log.debug("Making sure the cache is initialized properly", .{});
-    kernel.assert(@src(), !cr0.get_bit(.CD));
-    kernel.assert(@src(), !cr0.get_bit(.NW));
+    common.assert(@src(), !cr0.get_bit(.CD));
+    common.assert(@src(), !cr0.get_bit(.NW));
 }
 
 pub fn SimpleMSR(comptime msr: u32) type {
@@ -893,7 +896,7 @@ fn get_apic_base(ia32_apic_base: IA32_APIC_BASE.Flags) u32 {
 }
 
 pub const RFLAGS = struct {
-    pub const Flags = kernel.Bitflag(false, enum(u64) {
+    pub const Flags = Bitflag(false, enum(u64) {
         CF = 0,
         PF = 2,
         AF = 4,
@@ -1024,7 +1027,7 @@ pub inline fn are_interrupts_enabled() bool {
 
 pub const LAPIC = struct {
     ticks_per_ms: u32 = 0,
-    address: kernel.Virtual.Address,
+    address: VirtualAddress,
 
     const Register = enum(u32) {
         LAPIC_ID = 0x20,
@@ -1063,7 +1066,7 @@ pub const LAPIC = struct {
     }
 
     pub inline fn next_timer(lapic: LAPIC, ms: u32) void {
-        kernel.assert(@src(), lapic.ticks_per_ms != 0);
+        common.assert(@src(), lapic.ticks_per_ms != 0);
         lapic.write(.LVT_TIMER, timer_interrupt | (1 << 17));
         lapic.write(.TIMER_INITCNT, lapic.ticks_per_ms * ms);
     }
@@ -1174,7 +1177,7 @@ pub const Context = struct {
         context.rsp = user_stack;
         // TODO: remove when doing userspace
         log.debug("RSP: 0x{x}", .{context.rsp});
-        kernel.assert(@src(), context.rsp < thread.kernel_stack_base.value + thread.kernel_stack_size);
+        common.assert(@src(), context.rsp < thread.kernel_stack_base.value + thread.kernel_stack_size);
         context.rdi = entry_point.argument;
 
         return context;
@@ -1242,8 +1245,8 @@ export fn post_context_switch(context: *Context, new_thread: *kernel.scheduler.T
         @panic("interrupts were enabled");
     }
     kernel.scheduler.lock.release();
-    //kernel.assert(@src(), context == new_thread.context);
-    //kernel.assert(@src(), context.rsp < new_thread.kernel_stack_base.value + new_thread.kernel_stack_size);
+    //common.assert(@src(), context == new_thread.context);
+    //common.assert(@src(), context.rsp < new_thread.kernel_stack_base.value + new_thread.kernel_stack_size);
     context.check(@src());
     const current_cpu = get_current_cpu().?;
     current_cpu.current_thread = new_thread;
@@ -1271,7 +1274,7 @@ inline fn notify_config_op(bus: PCI.Bus, slot: PCI.Slot, function: PCI.Function,
 
 pub fn pci_read_config(comptime T: type, bus: PCI.Bus, slot: PCI.Slot, function: PCI.Function, offset: u8) T {
     const IntType = kernel.IntType(.unsigned, @bitSizeOf(T));
-    comptime kernel.assert_unsafe(IntType == u8 or IntType == u16 or IntType == u32);
+    comptime common.static_assert(IntType == u8 or IntType == u16 or IntType == u32);
     pci_lock.acquire();
     defer pci_lock.release();
 
@@ -1281,11 +1284,11 @@ pub fn pci_read_config(comptime T: type, bus: PCI.Bus, slot: PCI.Slot, function:
 
 pub fn pci_write_config(comptime T: type, value: T, bus: PCI.Bus, slot: PCI.Slot, function: PCI.Function, offset: u8) void {
     const IntType = kernel.IntType(.unsigned, @bitSizeOf(T));
-    comptime kernel.assert_unsafe(IntType == u8 or IntType == u16 or IntType == u32);
+    comptime common.static_assert(IntType == u8 or IntType == u16 or IntType == u32);
     pci_lock.acquire();
     defer pci_lock.release();
 
-    kernel.assert(@src(), kernel.is_aligned(offset, 4));
+    common.assert(@src(), kernel.is_aligned(offset, 4));
     notify_config_op(bus, slot, function, offset);
 
     io_write(IntType, IOPort.PCI_data + @intCast(u16, offset % 4), value);

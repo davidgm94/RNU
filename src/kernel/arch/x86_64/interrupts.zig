@@ -1,8 +1,9 @@
 const kernel = @import("root");
-const PIC = @import("pic.zig");
-const IDT = @import("idt.zig");
-const GDT = @import("gdt.zig");
-const x86_64 = @import("../x86_64.zig");
+const common = kernel.common;
+const x86_64 = kernel.arch.x86_64;
+const PIC = x86_64.PIC;
+const IDT = x86_64.IDT;
+const GDT = x86_64.GDT;
 const PCI = @import("../../../drivers/pci.zig");
 
 const interrupts = @This();
@@ -11,7 +12,7 @@ const Context = x86_64.Context;
 const TODO = kernel.TODO;
 const Thread = kernel.scheduler.Thread;
 const Virtual = kernel.Virtual;
-const log = kernel.log_scoped(.interrupts);
+const log = common.log.scoped(.interrupts);
 const Handler = fn () callconv(.Naked) void;
 
 export var idt: IDT = undefined;

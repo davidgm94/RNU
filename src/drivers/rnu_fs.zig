@@ -39,7 +39,7 @@ pub fn seek_file(fs_driver: *Filesystem, name: []const u8) ?SeekResult {
     const sectors_to_read_at_time = 1;
     var sector: u64 = 0;
     log.debug("Initializing search buffer", .{});
-    var search_buffer = fs_driver.disk.get_dma_buffer(fs_driver.disk, sectors_to_read_at_time);
+    var search_buffer = fs_driver.disk.get_dma_buffer(fs_driver.disk, fs_driver.allocator, sectors_to_read_at_time) catch @panic("dma buffer");
     log.debug("Done initializing search buffer", .{});
     const sector_size = fs_driver.disk.sector_size;
 
@@ -52,7 +52,7 @@ pub fn seek_file(fs_driver: *Filesystem, name: []const u8) ?SeekResult {
         });
         log.debug("FS driver ending read", .{});
         if (sectors_read != sectors_to_read_at_time) common.panic(@src(), "Driver internal error: cannot seek file", .{});
-        var node = @intToPtr(*RNUFS.Node, search_buffer.virtual_address);
+        var node = search_buffer.address.access(*RNUFS.Node);
         const node_name_cstr = @ptrCast([*:0]const u8, &node.name);
         const node_name = node_name_cstr[0..common.cstr_len(node_name_cstr)];
         if (node_name.len == 0) @panic("file not found: no files");
@@ -82,7 +82,7 @@ pub fn read_file(fs_driver: *Filesystem, name: []const u8) []const u8 {
         // TODO: maybe this should not be exact
         const sectors_to_read = common.bytes_to_sector(bytes_to_read, sector_size, .must_be_exact);
         // TODO:  @MaybeBug maybe allocate in the heap?
-        var buffer = fs_driver.disk.get_dma_buffer(fs_driver.disk, sectors_to_read);
+        var buffer = fs_driver.disk.get_dma_buffer(fs_driver.disk, fs_driver.allocator, sectors_to_read) catch @panic("unable to get dma buffer");
         // Add one to skip the metadata
         const sectors_read = fs_driver.disk.access(fs_driver.disk, &buffer, Disk.Work{
             .sector_offset = seek_result.sector + 1,
@@ -92,7 +92,7 @@ pub fn read_file(fs_driver: *Filesystem, name: []const u8) []const u8 {
 
         if (sectors_read != sectors_to_read) common.panic(@src(), "Driver internal error: cannot read file", .{});
 
-        return @intToPtr([*]const u8, buffer.virtual_address)[0..node_size];
+        return buffer.address.access([*]const u8)[0..node_size];
     } else {
         @panic("unable to find file");
     }

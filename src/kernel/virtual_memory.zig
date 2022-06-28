@@ -1,16 +1,19 @@
 const kernel = @import("root");
+const common = kernel.common;
+const VirtualAddress = common.VirtualAddress;
 const Virtual = kernel.Virtual;
+
 const Physical = kernel.Physical;
 
 pub const Region = struct {
-    address: Virtual.Address,
+    address: VirtualAddress,
     size: u64,
 
     item_address: kernel.AVL.Tree(Region).Item,
     item_size: kernel.AVL.Tree(Region).Item,
     used: bool,
 
-    pub fn new(address: Virtual.Address, size: u64) Region {
+    pub fn new(address: VirtualAddress, size: u64) Region {
         return Region{
             .address = address,
             .size = size,

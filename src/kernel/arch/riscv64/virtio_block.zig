@@ -1,4 +1,5 @@
 const kernel = @import("root");
+const common = @import("common");
 const virtio = @import("virtio.zig");
 const SplitQueue = virtio.SplitQueue;
 const MMIO = virtio.MMIO;
@@ -14,7 +15,7 @@ queue: *volatile SplitQueue,
 mmio: *volatile MMIO,
 batch_read_byte_count: u64,
 
-const log = kernel.log_scoped(.VirtioBlock);
+const log = common.log.scoped(.VirtioBlock);
 pub const Initialization = struct {
     pub const Context = u64;
     pub const Error = error{
@@ -166,7 +167,7 @@ pub fn read_callback(disk_driver: *Disk, buffer: []u8, start_sector: u64, sector
         driver.operate(.read, sector_i, sector_physical);
         bytes_asked += sector_size;
         while (driver.batch_read_byte_count != bytes_asked) {
-            kernel.spinloop_hint();
+            //kernel.spinloop_hint();
         }
     }
 

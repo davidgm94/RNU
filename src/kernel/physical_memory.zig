@@ -1,7 +1,8 @@
 const kernel = @import("root");
+const common = kernel.common;
 const Physical = kernel.Physical;
 const Virtual = kernel.Virtual;
-const log = kernel.log_scoped(.PhysicalMemory);
+const log = common.log.scoped(.PhysicalMemory);
 const TODO = kernel.TODO;
 pub var map: Map = undefined;
 

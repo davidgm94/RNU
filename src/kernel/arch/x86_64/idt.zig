@@ -3,7 +3,7 @@ const Interrupt = @import("interrupts.zig");
 const DescriptorTable = @import("descriptor_table.zig");
 const IDT = @This();
 
-const log = kernel.log_scoped(.IDT);
+const log = common.log.scoped(.IDT);
 
 entries: [256]Descriptor,
 

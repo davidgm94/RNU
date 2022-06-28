@@ -1,5 +1,6 @@
 const kernel = @import("root");
-const log = kernel.log_scoped(.AVL);
+const common = kernel.common;
+const log = common.log.scoped(.AVL);
 
 pub fn Tree(comptime T: type) type {
     return struct {

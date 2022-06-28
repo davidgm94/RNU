@@ -1,9 +1,12 @@
 const kernel = @import("root");
-const std = @import("std");
+const common = kernel.common;
 const stivale = @import("header.zig");
-const log = kernel.log_scoped(.stivale);
+const log = common.log.scoped(.stivale);
 const assert = kernel.assert_unsafe;
 const x86_64 = @import("../../../x86_64.zig");
+
+const VirtualAddress = common.VirtualAddress;
+
 pub const Struct = stivale.Struct;
 
 pub const Error = error{
@@ -186,7 +189,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
     return result;
 }
 
-pub fn process_higher_half_direct_map(stivale2_struct: *Struct) Error!kernel.Virtual.Address {
+pub fn process_higher_half_direct_map(stivale2_struct: *Struct) Error!VirtualAddress {
     const hhdm_struct = find(Struct.HHDM, stivale2_struct) orelse return Error.higher_half_direct_map;
     log.debug("HHDM: 0x{x}", .{hhdm_struct.addr});
     return kernel.Virtual.Address.new(hhdm_struct.addr);

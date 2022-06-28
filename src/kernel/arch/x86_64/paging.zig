@@ -6,12 +6,13 @@
 // • The “enable HLAT” VM-execution control (tertiary processor-based VM-execution control bit 1; see Section 24.6.2, “Processor-Based VM-Execution Controls,” in the Intel® 64 and IA-32 Architectures Software Developer’s Manual, Volume 3C).
 
 const kernel = @import("root");
-const x86_64 = @import("../x86_64.zig");
+const common = kernel.common;
+const x86_64 = kernel.arch.x86_64;
 
 const Physical = kernel.Physical;
 const Virtual = kernel.Virtual;
 const TODO = kernel.TODO;
-const log = kernel.log_scoped(.Paging_x86_64);
+const log = common.log.scoped(.Paging_x86_64);
 
 const PML4Table = [512]PML4E;
 const PDPTable = [512]PDPTE;

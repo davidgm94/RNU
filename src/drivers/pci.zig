@@ -1,11 +1,14 @@
 // TODO: batch PCI register access
 const kernel = @import("root");
-const log = kernel.log_scoped(.PCI);
+const common = @import("common");
+const log = common.log.scoped(.PCI);
 const TODO = kernel.TODO;
 const Controller = @This();
 const x86_64 = @import("../kernel/arch/x86_64.zig");
 const Physical = kernel.Physical;
 const Virtual = kernel.Virtual;
+const VirtualAddress = common.VirtualAddress;
+const PhysicalAddress = common.PhysicalAddress;
 
 devices: []Device,
 bus_scan_states: [256]BusScanState,
@@ -425,8 +428,8 @@ pub const Device = struct {
     interrupt_pin: u8,
     interrupt_line: u8,
 
-    base_virtual_addresses: [6]kernel.Virtual.Address,
-    base_physical_addresses: [6]kernel.Physical.Address,
+    base_virtual_addresses: [6]VirtualAddress,
+    base_physical_addresses: [6]PhysicalAddress,
     base_addresses_size: [6]u64,
     base_addresses: [6]u32,
 

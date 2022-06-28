@@ -1,5 +1,6 @@
 const kernel = @import("root");
-const log = kernel.log_scoped(.ELF);
+const common = kernel.common;
+const log = common.log.scoped(.ELF);
 
 const FileHeader = extern struct {
     // e_ident

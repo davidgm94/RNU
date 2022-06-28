@@ -1,6 +1,7 @@
 const kernel = @import("root");
+const common = kernel.common;
 const TODO = kernel.TODO;
-const log = kernel.log_scoped(.Physical);
+const log = common.log.scoped(.Physical);
 
 const MemoryMap = @import("memory_map.zig");
 var bitset_memory: [0x400_000 + (10 * kernel.arch.page_size)]u8 align(kernel.arch.page_size) = undefined;

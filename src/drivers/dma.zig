@@ -1,7 +1,8 @@
 const drivers = @import("../drivers.zig");
+const common = @import("../common.zig");
 
 pub const Buffer = struct {
-    virtual_address: u64, // TODO: This should be a wrapped VirtualAddress, but since the code is shared we can't do that
+    address: common.VirtualAddress,
     total_size: u64,
     completed_size: u64,
 };

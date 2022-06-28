@@ -1,11 +1,12 @@
 const kernel = @import("root");
+const common = kernel.common;
 const virtio = @import("virtio.zig");
 const MMIO = virtio.MMIO;
 const SplitQueue = virtio.SplitQueue;
 const Descriptor = virtio.Descriptor;
 
 const Graphics = kernel.graphics;
-const log = kernel.log_scoped(.VirtioGPU);
+const log = common.log.scoped(.VirtioGPU);
 const TODO = kernel.TODO;
 
 const GenericDriver = kernel.driver;
@@ -149,8 +150,8 @@ fn pending_operations_handler() void {
     //const interrupt_status = driver.mmio.interrupt_status;
     //log.debug("Interrupt status: {}", .{interrupt_status});
     const old = driver.pmode;
-    kernel.assert(@src(), old.rect.width == driver.graphics.framebuffer.width);
-    kernel.assert(@src(), old.rect.height == driver.graphics.framebuffer.height);
+    common.assert(@src(), old.rect.width == driver.graphics.framebuffer.width);
+    common.assert(@src(), old.rect.height == driver.graphics.framebuffer.height);
     driver.request_display_info();
     const new = driver.pmode;
     log.debug("Old: {}, {}. New: {}, {}", .{ old.rect.width, old.rect.height, new.rect.width, new.rect.height });
@@ -161,7 +162,7 @@ fn pending_operations_handler() void {
 }
 
 fn request_display_info(driver: *Driver) void {
-    kernel.assert(@src(), driver.pending_display_info_request);
+    common.assert(@src(), driver.pending_display_info_request);
     var header = kernel.zeroes(ControlHeader);
     header.type = ControlType.cmd_get_display_info;
 
@@ -240,7 +241,7 @@ const ControlType = enum(u32) {
     resp_err_invalid_parameter,
 
     fn get_request_counter_index(control_type: ControlType) u64 {
-        kernel.assert(@src(), @enumToInt(control_type) < @enumToInt(ControlType.cmd_update_cursor));
+        common.assert(@src(), @enumToInt(control_type) < @enumToInt(ControlType.cmd_update_cursor));
         return @enumToInt(control_type) - @enumToInt(ControlType.cmd_get_display_info);
     }
 };
@@ -460,7 +461,7 @@ fn send_request_and_wait(driver: *Driver, request_descriptor: anytype, comptime 
     driver.operate(request_bytes, response_size);
 
     while (driver.request_counters[request_counter_index] != request_counter) {
-        kernel.spinloop_hint();
+        //kernel.spinloop_hint();
     }
 
     log.debug("{s} #{} processed successfully", .{ @tagName(control_header_type), request_counter });

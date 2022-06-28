@@ -1,5 +1,6 @@
 const kernel = @import("root");
-const current_arch = kernel.cpu.arch;
+const common = kernel.common;
+const current_arch = common.cpu.arch;
 pub const riscv64 = @import("arch/riscv64/riscv64.zig");
 pub const x86_64 = @import("arch/x86_64.zig");
 const arch = switch (current_arch) {
@@ -49,7 +50,7 @@ pub const Writer = struct {
     }
 };
 
-pub var writer = kernel.Writer(void, Writer.Error, Writer.write){ .context = {} };
+pub var writer = common.Writer(void, Writer.Error, Writer.write){ .context = {} };
 
 pub fn check_page_size(asked_page_size: u64) u64 {
     for (arch.valid_page_sizes) |valid_page_size| {

@@ -1,5 +1,6 @@
 const kernel = @import("root");
-const log = kernel.log_scoped(.Virtio);
+const common = kernel.common;
+const log = common.log.scoped(.Virtio);
 const TODO = kernel.TODO;
 const PCI = @import("pci.zig");
 

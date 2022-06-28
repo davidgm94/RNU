@@ -1,6 +1,7 @@
 // This has been implemented with NVMe Specification 2.0b
 const kernel = @import("root");
-const log = kernel.log_scoped(.NVMe);
+const common = @import("../common.zig");
+const log = common.log.scoped(.NVMe);
 const TODO = kernel.TODO;
 const Disk = kernel.drivers.Disk;
 const PCI = kernel.drivers.PCI;
@@ -10,6 +11,8 @@ const x86_64 = @import("../kernel/arch/x86_64.zig");
 
 const Physical = kernel.Physical;
 const Virtual = kernel.Virtual;
+const PhysicalAddress = common.PhysicalAddress;
+const VirtualAddress = common.VirtualAddress;
 
 const NVMe = @This();
 const Driver = NVMe;
@@ -41,8 +44,8 @@ io_submission_queue_tail: u32,
 io_submission_queue_head: u32,
 io_completion_queue_phase: bool,
 
-prp_list_pages: [io_queue_entry_count]kernel.Physical.Address,
-prp_list_virtual: kernel.Virtual.Address,
+prp_list_pages: [io_queue_entry_count]PhysicalAddress,
+prp_list_virtual: VirtualAddress,
 
 drives: []Drive,
 
@@ -63,7 +66,7 @@ const Drive = struct {
             allocation_failure,
         };
 
-        pub fn callback(allocator: kernel.Allocator, drive: *NVMe.Drive) Error!*Drive {
+        pub fn callback(allocator: common.Allocator, drive: *NVMe.Drive) Error!*Drive {
             _ = allocator;
             return drive;
         }
@@ -74,15 +77,16 @@ const Drive = struct {
             .disk = Disk{
                 .type = .nvme,
                 .sector_size = sector_size,
-                .access = access,
+                .access = access, // access: fn (driver: *Driver, buffer: *DMA.Buffer, disk_work: Work) u64,
+                .get_dma_buffer = get_dma_buffer,
             },
             .nsid = nsid,
         };
     }
 
     pub fn access(disk: *Disk, buffer: *DMA.Buffer, disk_work: Disk.Work) u64 {
-        kernel.assert(@src(), buffer.completed_size == 0);
-        kernel.assert(@src(), buffer.address.is_page_aligned());
+        common.assert(@src(), buffer.completed_size == 0);
+        common.assert(@src(), buffer.address.is_page_aligned());
         const drive = @fieldParentPtr(Drive, "disk", disk);
         const nvme = driver;
         log.debug("NVMe access", .{});
@@ -151,6 +155,16 @@ const Drive = struct {
             TODO(@src());
         }
     }
+
+    pub fn get_dma_buffer(disk: *Disk, allocator: common.Allocator, sector_count: u64) common.Allocator.Error!DMA.Buffer {
+        const byte_size = kernel.align_forward(sector_count * disk.sector_size, kernel.arch.page_size);
+        return DMA.Buffer{
+            .virtual_address = try allocator.allocBytes(@intCast(u29, kernel.arch.page_size), byte_size, 0, 0),
+            .total_size = byte_size,
+            .complete_size = 0,
+        };
+    }
+    //get_dma_buffer: fn (driver: *Driver, sector_count: u64) DMA.Buffer,
 };
 
 pub const Initialization = struct {
@@ -160,7 +174,7 @@ pub const Initialization = struct {
         not_found,
     };
 
-    pub fn callback(allocator: kernel.Allocator, pci: *PCI) Error!*Driver {
+    pub fn callback(allocator: common.Allocator, pci: *PCI) Error!*Driver {
         const nvme_device = find(pci) orelse return Error.not_found;
         log.debug("Found controller", .{});
         driver = allocator.create(Driver) catch return Error.allocation_failure;

@@ -115,7 +115,8 @@ const Kernel = struct {
         }
 
         kernel.executable.setTarget(target);
-        //kernel.executable.setMainPkgPath("src");
+        kernel.executable.setMainPkgPath("src");
+        kernel.executable.addPackagePath("common", "src/common.zig");
         kernel.executable.setBuildMode(kernel.builder.standardReleaseOptions());
         kernel.executable.setOutputDir(cache_dir);
         kernel.builder.default_step.dependOn(&kernel.executable.step);

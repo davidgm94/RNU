@@ -1,7 +1,8 @@
 const kernel = @import("root");
-const x86_64 = @import("../x86_64.zig");
+const common = kernel.common;
+const x86_64 = kernel.arch.x86_64;
 
-const log = kernel.log_scoped(.Syscall_x86_64);
+const log = common.log.scoped(.Syscall_x86_64);
 
 pub fn enable() void {
     x86_64.IA32_LSTAR.write(@ptrToInt(syscall_entry_point));

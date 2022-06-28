@@ -1,6 +1,7 @@
 const kernel = @import("root");
-const log = kernel.log_scoped(.PSF1);
-const TODO = kernel.TODO;
+const common = kernel.common;
+const log = common.log.scoped(.PSF1);
+const TODO = common.TODO;
 
 pub const Header = struct {
     magic: [2]u8,

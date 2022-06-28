@@ -98,8 +98,6 @@ pub const max_int = std.math.maxInt;
 
 pub const as_bytes = std.mem.asBytes;
 
-pub const spinloop_hint = std.atomic.spinLoopHint;
-
 pub fn cstr_len(cstr: [*:0]const u8) u64 {
     var length: u64 = 0;
     while (cstr[length] != 0) : (length += 1) {}

@@ -12,12 +12,12 @@ pub const PCI = @import("drivers/pci.zig");
 pub fn Driver(comptime Generic: type, comptime Specific: type) type {
     // TODO: improve safety
     const child_fields = common.fields(Specific);
-    common.assert(child_fields.len > 0);
+    common.static_assert(child_fields.len > 0);
     const first_field = child_fields[0];
-    common.assert(first_field.field_type == Generic);
+    common.static_assert(first_field.field_type == Generic);
 
     return struct {
-        const log = kernel.log_scoped(.DriverInitialization);
+        const log = common.log.scoped(.DriverInitialization);
         const Initialization = Specific.Initialization;
 
         pub fn init(allocator: common.Allocator, context: Initialization.Context) Initialization.Error!void {
@@ -34,7 +34,7 @@ pub fn Driver(comptime Generic: type, comptime Specific: type) type {
 pub const AllocationCallback = fn (size: u64) ?u64;
 
 pub fn init() !void {
-    const log = kernel.log_scoped(.drivers);
+    const log = common.log.scoped(.drivers);
     const allocator = kernel.core_heap.allocator;
     try kernel.arch.init_block_drivers(allocator);
     log.debug("Initialized block drivers", .{});

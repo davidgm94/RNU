@@ -2,7 +2,7 @@ const kernel = @import("root");
 const Drivers = @import("../drivers.zig");
 const common = @import("../common.zig");
 const TODO = kernel.TODO;
-const log = kernel.log_scoped(.FS);
+const log = common.log.scoped(.FS);
 
 const Driver = @This();
 
