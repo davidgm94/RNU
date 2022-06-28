@@ -1,14 +1,17 @@
-const kernel = @import("root");
-const DMA = kernel.drivers.DMA;
+const Drivers = @import("../drivers.zig");
+const common = @import("../common.zig");
+const DMA = Drivers.DMA;
 const Driver = @This();
 
 pub const Type = enum(u32) {
-    virtio = 0,
-    nvme = 1,
+    nvme = 0,
+    virtio = 1,
+    virtual = 2,
 };
 
 sector_size: u64,
 access: fn (driver: *Driver, buffer: *DMA.Buffer, disk_work: Work) u64,
+get_dma_buffer: fn (driver: *Driver, sector_count: u64) DMA.Buffer,
 type: Type,
 
 pub const Work = struct {
@@ -22,4 +25,4 @@ pub const Operation = enum {
     write,
 };
 
-pub var drivers: kernel.ArrayList(*Driver) = undefined;
+pub var drivers: common.ArrayList(*Driver) = undefined;

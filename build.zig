@@ -4,7 +4,10 @@ const log = std.log;
 const print = std.debug.print;
 const assert = std.debug.assert;
 
-const fs = @import("src/build/fs.zig");
+const common = @import("src/common.zig");
+const FSBuilder = @import("src/build/fs.zig");
+const drivers = @import("src/drivers.zig");
+const RNUFS = drivers.RNUFS;
 const Builder = std.build.Builder;
 const LibExeObjStep = std.build.LibExeObjStep;
 const Step = std.build.Step;
@@ -20,7 +23,14 @@ const cache_dir = "zig-cache";
 const kernel_name = "kernel.elf";
 const kernel_path = cache_dir ++ "/" ++ kernel_name;
 
+// We are relying on this hack for now, so we must check this is holding right with next Zig versions
+fn test_comptime_hack() void {
+    assert(!common.is_comptime());
+    assert(comptime common.is_comptime());
+}
+
 pub fn build(b: *Builder) void {
+    test_comptime_hack();
     const kernel = b.allocator.create(Kernel) catch unreachable;
     // zig fmt: off
     kernel.* = Kernel {
@@ -367,19 +377,28 @@ const Kernel = struct {
 
         fn make(step: *Step) !void {
             const kernel = @fieldParentPtr(Kernel, "disk_step", step);
-            const font_file = try std.fs.cwd().readFileAlloc(kernel.builder.allocator, "resources/zap-light16.psf", std.math.maxInt(usize));
-            std.debug.print("Font file size: {} bytes\n", .{font_file.len});
-            var disk = fs.MemoryDisk{
-                .bytes = buffer[0..],
-            };
-            fs.add_file(disk, "font.psf", font_file);
-            var debug_file = std.ArrayList(u8).init(kernel.builder.allocator);
-            for (disk.bytes) |byte, i| {
-                try debug_file.appendSlice(kernel.builder.fmt("[{}] = 0x{x}]\n", .{ i, byte }));
-            }
+            var disk = FSBuilder.Initialization.callback(kernel.builder.allocator, .{
+                .size = block_size * block_count,
+                .alignment = 0x1000,
+                .sector_size = 0x200,
+            }) catch unreachable;
+            var rnufs = RNUFS.Initialization.callback(kernel.builder.allocator, &disk.disk) catch unreachable;
+            _ = rnufs;
+            unreachable;
+            //const font_file = try std.fs.cwd().readFileAlloc(kernel.builder.allocator, "resources/zap-light16.psf", std.math.maxInt(usize));
+            //std.debug.print("Font file size: {} bytes\n", .{font_file.len});
+            //fs.add_file(disk, "font.psf", font_file);
+            //for (kernel.userspace_programs) |program| {
+            //const program_file = try std.fs.cwd().readFileAlloc(kernel.builder.allocator, program.output_path_source.getPath(), std.math.maxInt(usize));
+            //fs.add_file(disk, program.out_filename, program_file);
+            //}
+            //var debug_file = std.ArrayList(u8).init(kernel.builder.allocator);
+            //for (disk.bytes) |byte, i| {
+            //try debug_file.appendSlice(kernel.builder.fmt("[{}] = 0x{x}]\n", .{ i, byte }));
+            //}
 
-            try std.fs.cwd().writeFile("debug_disk", debug_file.items);
-            try std.fs.cwd().writeFile(Disk.path, &Disk.buffer);
+            //try std.fs.cwd().writeFile("debug_disk", debug_file.items);
+            //try std.fs.cwd().writeFile(Disk.path, &Disk.buffer);
         }
     };
 
@@ -658,3 +677,4 @@ const ZigProgramDescriptor = struct {
 ////_ = process.spawnAndWait() catch unreachable;
 //}
 //};
+fn crash() void {}

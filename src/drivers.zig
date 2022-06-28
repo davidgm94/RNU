@@ -1,4 +1,5 @@
 const kernel = @import("root");
+const common = @import("common.zig");
 pub const DMA = @import("drivers/dma.zig");
 
 pub const Disk = @import("drivers/disk.zig");
@@ -10,16 +11,16 @@ pub const PCI = @import("drivers/pci.zig");
 
 pub fn Driver(comptime Generic: type, comptime Specific: type) type {
     // TODO: improve safety
-    const child_fields = kernel.fields(Specific);
-    kernel.assert_unsafe(child_fields.len > 0);
+    const child_fields = common.fields(Specific);
+    common.assert(child_fields.len > 0);
     const first_field = child_fields[0];
-    kernel.assert_unsafe(first_field.field_type == Generic);
+    common.assert(first_field.field_type == Generic);
 
     return struct {
         const log = kernel.log_scoped(.DriverInitialization);
         const Initialization = Specific.Initialization;
 
-        pub fn init(allocator: kernel.Allocator, context: Initialization.Context) Initialization.Error!void {
+        pub fn init(allocator: common.Allocator, context: Initialization.Context) Initialization.Error!void {
             const driver = Initialization.callback(allocator, context) catch |err| {
                 log.debug("An error ocurred initializating driver {}: {}", .{ Specific, err });
                 return err;

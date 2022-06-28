@@ -1,15 +1,16 @@
 //! This is not an official USTAR implementation, but my own custom version just to get started with
 pub const Node = struct {
-    name: [100]u8,
-    parent: [100]u8,
+    type: NodeType,
     size: u64,
     last_modification: u64,
-    type: NodeType,
+    name: [100]u8,
+    parent: [100]u8,
 };
 
 pub const NodeType = enum(u64) {
-    file,
-    directory,
+    empty = 0,
+    file = 1,
+    directory = 2,
 };
 
 pub const sector_size = 0x200;
