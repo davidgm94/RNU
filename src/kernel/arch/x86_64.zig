@@ -10,28 +10,33 @@ const RNUFS = drivers.RNUFS;
 const TODO = kernel.TODO;
 
 const log = common.log.scoped(.x86_64);
-const VirtualAddress = common.VirtualAddress;
 const Bitflag = common.Bitflag;
+const Virtual = kernel.Virtual;
+const Physical = kernel.Physical;
+const Thread = kernel.scheduler.Thread;
+const VirtualAddress = common.VirtualAddress;
+const PhysicalAddress = common.PhysicalAddress;
 
 pub const page_size = kernel.arch.check_page_size(0x1000);
 
 pub const Stivale2 = @import("x86_64/limine/stivale2/stivale2.zig");
-pub const Spinlock = @import("x86_64/spinlock.zig");
+
+pub const DescriptorTable = @import("x86_64/descriptor_table.zig");
 pub const PIC = @import("x86_64/pic.zig");
 pub const GDT = @import("x86_64/gdt.zig");
 pub const TSS = @import("x86_64/tss.zig");
+pub const IDT = @import("x86_64/idt.zig");
+
 pub const interrupts = @import("x86_64/interrupts.zig");
 pub const Paging = @import("x86_64/paging.zig");
 pub const ACPI = @import("x86_64/acpi.zig");
 pub const Syscall = @import("x86_64/syscall.zig");
+pub const Spinlock = @import("x86_64/spinlock.zig");
 /// This is just the arch-specific part of the address space
 pub const AddressSpace = Paging.AddressSpace;
-const Virtual = kernel.Virtual;
-const Physical = kernel.Physical;
-const Thread = kernel.scheduler.Thread;
 
 pub const IOAPIC = struct {
-    address: Physical.Address,
+    address: PhysicalAddress,
     gsi: u32,
     id: u8,
 
@@ -65,20 +70,20 @@ pub export fn start(stivale2_struct_address: u64) noreturn {
     kernel.address_space = kernel.Virtual.AddressSpace.from_current() orelse unreachable;
     kernel.core_heap.init(&kernel.address_space);
     enable_cpu_features();
-    const stivale2_struct_physical_address = Physical.Address.new(stivale2_struct_address);
+    const stivale2_struct_physical_address = PhysicalAddress.new(stivale2_struct_address);
     kernel.higher_half_direct_map = Stivale2.process_higher_half_direct_map(stivale2_struct_physical_address.access_identity(*Stivale2.Struct)) catch unreachable;
     const rsdp = Stivale2.process_rsdp(stivale2_struct_physical_address.access_identity(*Stivale2.Struct)) catch unreachable;
-    Physical.Memory.map = Stivale2.process_memory_map(stivale2_struct_physical_address.access_identity(*Stivale2.Struct)) catch unreachable;
+    Physical.Memory.memory_map = Stivale2.process_memory_map(stivale2_struct_physical_address.access_identity(*Stivale2.Struct)) catch unreachable;
     Paging.init(Stivale2.get_pmrs(stivale2_struct_physical_address.access_identity(*Stivale2.Struct)));
-    const region_type = Physical.Memory.map.find_address(stivale2_struct_physical_address);
+    const region_type = Physical.Memory.memory_map.find_address(stivale2_struct_physical_address);
     log.debug("Region type: {}", .{region_type});
     Stivale2.process_bootloader_information(stivale2_struct_physical_address.access_higher_half(*Stivale2.Struct)) catch unreachable;
     preinit_scheduler();
     init_scheduler();
     prepare_drivers(rsdp);
     drivers.init() catch |driver_init_error| kernel.crash("Failed to initialize drivers: {}", .{driver_init_error});
-    common.assert(@src(), Disk.drivers.items.len > 0);
-    common.assert(@src(), Filesystem.drivers.items.len > 0);
+    common.runtime_assert(@src(), Disk.drivers.items.len > 0);
+    common.runtime_assert(@src(), Filesystem.drivers.items.len > 0);
     register_main_storage();
     _ = kernel.main_storage.read_file_callback(Filesystem.drivers.items[0], "font.psf");
 
@@ -104,7 +109,7 @@ pub fn init_block_drivers(allocator: common.Allocator) !void {
     // TODO: make a category for NVMe and standardize it there
     // INFO: this callback also initialize child drives
     NVMe.driver = try NVMe.Initialization.callback(allocator, &PCI.controller);
-    common.assert(@src(), Disk.drivers.items.len > 0);
+    common.runtime_assert(@src(), Disk.drivers.items.len > 0);
     try drivers.Driver(Filesystem, RNUFS).init(allocator, Disk.drivers.items[0]);
 }
 
@@ -113,7 +118,7 @@ pub fn init_graphics_drivers(allocator: common.Allocator) !void {
     log.debug("TODO: initialize graphics drivers", .{});
 }
 
-fn prepare_drivers(rsdp: Physical.Address) void {
+fn prepare_drivers(rsdp: PhysicalAddress) void {
     ACPI.init(rsdp);
     PCI.init();
 }
@@ -130,7 +135,7 @@ fn init_timer() void {
     disable_interrupts();
     const bsp = &kernel.cpus[0];
     const timer_calibration_start = read_timestamp();
-    bsp.lapic.write(.TIMER_INITCNT, kernel.max_int(u32));
+    bsp.lapic.write(.TIMER_INITCNT, common.max_int(u32));
     var times_i: u64 = 0;
     const times = 8;
 
@@ -144,7 +149,7 @@ fn init_timer() void {
             if (io_read(u8, IOPort.PIT_data) & (1 << 7) != 0) break;
         }
     }
-    bsp.lapic.ticks_per_ms = kernel.max_int(u32) - bsp.lapic.read(.TIMER_CURRENT_COUNT) >> 4;
+    bsp.lapic.ticks_per_ms = common.max_int(u32) - bsp.lapic.read(.TIMER_CURRENT_COUNT) >> 4;
     const timer_calibration_end = read_timestamp();
     timestamp_ticks_per_ms = (timer_calibration_end - timer_calibration_start) >> 3;
     enable_interrupts();
@@ -196,10 +201,10 @@ pub fn enable_apic() void {
     const ia32_apic = IA32_APIC_BASE.read();
     const apic_physical_address = get_apic_base(ia32_apic);
     log.debug("APIC physical address: 0{x}", .{apic_physical_address});
-    cpu.lapic = LAPIC.new(Physical.Address.new(apic_physical_address));
+    cpu.lapic = LAPIC.new(PhysicalAddress.new(apic_physical_address));
     cpu.lapic.write(.SPURIOUS, spurious_value);
     const lapic_id = cpu.lapic.read(.LAPIC_ID);
-    common.assert(@src(), lapic_id == cpu.lapic_id);
+    common.runtime_assert(@src(), lapic_id == cpu.lapic_id);
     log.debug("APIC enabled", .{});
 }
 
@@ -240,7 +245,7 @@ pub fn preinit_scheduler() void {
 //}
 //}
 
-//pub var rsdp: kernel.Physical.Address = undefined;
+//pub var rsdp: PhysicalAddress = undefined;
 
 pub const IOPort = struct {
     pub const DMA1 = 0x0000;
@@ -286,7 +291,7 @@ const Serial = struct {
     };
 
     fn Port(comptime port_number: u8) type {
-        comptime common.static_assert(@src(), port_number > 0 and port_number <= 8);
+        comptime common.comptime_assert(@src(), port_number > 0 and port_number <= 8);
         const port_index = port_number - 1;
 
         return struct {
@@ -777,8 +782,8 @@ fn get_task_priority_level() u4 {
 }
 
 fn enable_cpu_features() void {
-    Physical.Address.max_bit = CPUID.get_max_physical_address_bit();
-    Physical.Address.max = @as(u64, 1) << Physical.Address.max_bit;
+    PhysicalAddress.max_bit = CPUID.get_max_physical_address_bit();
+    PhysicalAddress.max = @as(u64, 1) << PhysicalAddress.max_bit;
 
     // Initialize FPU
     var cr0_value = cr0.read();
@@ -801,8 +806,8 @@ fn enable_cpu_features() void {
     );
 
     log.debug("Making sure the cache is initialized properly", .{});
-    common.assert(@src(), !cr0.get_bit(.CD));
-    common.assert(@src(), !cr0.get_bit(.NW));
+    common.runtime_assert(@src(), !cr0.get_bit(.CD));
+    common.runtime_assert(@src(), !cr0.get_bit(.NW));
 }
 
 pub fn SimpleMSR(comptime msr: u32) type {
@@ -837,7 +842,7 @@ pub fn ComplexMSR(comptime msr: u32, comptime _BitEnum: type) type {
     return struct {
         pub const BitEnum = _BitEnum;
 
-        pub const Flags = kernel.Bitflag(false, BitEnum);
+        pub const Flags = common.Bitflag(false, BitEnum);
         pub inline fn read() Flags {
             var low: u32 = undefined;
             var high: u32 = undefined;
@@ -1042,7 +1047,7 @@ pub const LAPIC = struct {
         TIMER_CURRENT_COUNT = 0x390,
     };
 
-    pub inline fn new(lapic_physical_address: Physical.Address) LAPIC {
+    pub inline fn new(lapic_physical_address: PhysicalAddress) LAPIC {
         //Paging.should_log = true;
         const lapic_virtual_address = lapic_physical_address.to_higher_half_virtual_address();
         log.debug("Virtual address: 0x{x}", .{lapic_virtual_address.value});
@@ -1066,7 +1071,7 @@ pub const LAPIC = struct {
     }
 
     pub inline fn next_timer(lapic: LAPIC, ms: u32) void {
-        common.assert(@src(), lapic.ticks_per_ms != 0);
+        common.runtime_assert(@src(), lapic.ticks_per_ms != 0);
         lapic.write(.LVT_TIMER, timer_interrupt | (1 << 17));
         lapic.write(.TIMER_INITCNT, lapic.ticks_per_ms * ms);
     }
@@ -1155,7 +1160,7 @@ pub const Context = struct {
         const user_stack = thread.user_stack_reserve - 8 + user_stack_base;
         log.debug("User stack: 0x{x}", .{user_stack});
         const context = @intToPtr(*Context, kernel_stack - @sizeOf(Context));
-        thread.kernel_stack = Virtual.Address.new(kernel_stack);
+        thread.kernel_stack = VirtualAddress.new(kernel_stack);
         log.debug("ARch Kernel stack: 0x{x}", .{thread.kernel_stack.value});
         thread.kernel_stack.access(*u64).* = @ptrToInt(thread_terminate_stack);
         log.debug("Privilege level", .{});
@@ -1177,7 +1182,7 @@ pub const Context = struct {
         context.rsp = user_stack;
         // TODO: remove when doing userspace
         log.debug("RSP: 0x{x}", .{context.rsp});
-        common.assert(@src(), context.rsp < thread.kernel_stack_base.value + thread.kernel_stack_size);
+        common.runtime_assert(@src(), context.rsp < thread.kernel_stack_base.value + thread.kernel_stack_size);
         context.rdi = entry_point.argument;
 
         return context;
@@ -1185,12 +1190,12 @@ pub const Context = struct {
 
     pub fn debug(context: *Context) void {
         log.debug("Context address: 0x{x}", .{@ptrToInt(context)});
-        inline for (kernel.fields(Context)) |field| {
+        inline for (common.fields(Context)) |field| {
             log.debug("{s}: 0x{x}", .{ field.name, @field(context, field.name) });
         }
     }
 
-    pub fn check(context: *Context, src: kernel.SourceLocation) void {
+    pub fn check(context: *Context, src: common.SourceLocation) void {
         var failed = false;
         failed = failed or context.cs > 0x100;
         failed = failed or context.ss > 0x100;
@@ -1245,8 +1250,8 @@ export fn post_context_switch(context: *Context, new_thread: *kernel.scheduler.T
         @panic("interrupts were enabled");
     }
     kernel.scheduler.lock.release();
-    //common.assert(@src(), context == new_thread.context);
-    //common.assert(@src(), context.rsp < new_thread.kernel_stack_base.value + new_thread.kernel_stack_size);
+    //common.runtime_assert(@src(), context == new_thread.context);
+    //common.runtime_assert(@src(), context.rsp < new_thread.kernel_stack_base.value + new_thread.kernel_stack_size);
     context.check(@src());
     const current_cpu = get_current_cpu().?;
     current_cpu.current_thread = new_thread;
@@ -1273,8 +1278,8 @@ inline fn notify_config_op(bus: PCI.Bus, slot: PCI.Slot, function: PCI.Function,
 }
 
 pub fn pci_read_config(comptime T: type, bus: PCI.Bus, slot: PCI.Slot, function: PCI.Function, offset: u8) T {
-    const IntType = kernel.IntType(.unsigned, @bitSizeOf(T));
-    comptime common.static_assert(IntType == u8 or IntType == u16 or IntType == u32);
+    const IntType = common.IntType(.unsigned, @bitSizeOf(T));
+    comptime common.comptime_assert(IntType == u8 or IntType == u16 or IntType == u32);
     pci_lock.acquire();
     defer pci_lock.release();
 
@@ -1283,12 +1288,12 @@ pub fn pci_read_config(comptime T: type, bus: PCI.Bus, slot: PCI.Slot, function:
 }
 
 pub fn pci_write_config(comptime T: type, value: T, bus: PCI.Bus, slot: PCI.Slot, function: PCI.Function, offset: u8) void {
-    const IntType = kernel.IntType(.unsigned, @bitSizeOf(T));
-    comptime common.static_assert(IntType == u8 or IntType == u16 or IntType == u32);
+    const IntType = common.IntType(.unsigned, @bitSizeOf(T));
+    comptime common.comptime_assert(IntType == u8 or IntType == u16 or IntType == u32);
     pci_lock.acquire();
     defer pci_lock.release();
 
-    common.assert(@src(), kernel.is_aligned(offset, 4));
+    common.runtime_assert(@src(), common.is_aligned(offset, 4));
     notify_config_op(bus, slot, function, offset);
 
     io_write(IntType, IOPort.PCI_data + @intCast(u16, offset % 4), value);

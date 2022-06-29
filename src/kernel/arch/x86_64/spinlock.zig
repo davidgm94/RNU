@@ -38,7 +38,7 @@ pub fn release(spinlock: *volatile Spinlock) void {
     @fence(.Release);
     //const result = @cmpxchgStrong(@TypeOf(spinlock.status), @ptrCast(*bool, &spinlock.status), expected, !expected, .Release, .Monotonic);
     spinlock.status = false;
-    //kernel.assert(@src(), result == null);
+    //common.runtime_assert(@src(), result == null);
     if (were_interrupts_enabled) {
         kernel.arch.enable_interrupts();
     }

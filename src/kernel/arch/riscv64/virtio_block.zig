@@ -88,8 +88,8 @@ pub fn operate(driver: *Driver, comptime operation: Operation, sector_index: u64
     const status_size = 1;
     const header_size = @sizeOf(Request.Header);
 
-    const status_buffer = kernel.heap.allocate(status_size, true, true) orelse @panic("status buffer unable to be allocated");
-    const header_buffer = kernel.heap.allocate(header_size, true, true) orelse @panic("header buffer unable to be allocated");
+    const status_buffer = kernel.core_heap.allocate(status_size, true, true) orelse @panic("status buffer unable to be allocated");
+    const header_buffer = kernel.core_heap.allocate(header_size, true, true) orelse @panic("header buffer unable to be allocated");
     // TODO: Here we should distinguish between virtual and physical addresses
     const header = @intToPtr(*Request.Header, header_buffer.virtual);
     header.block_type = switch (operation) {
@@ -128,7 +128,7 @@ pub fn operate(driver: *Driver, comptime operation: Operation, sector_index: u64
 }
 
 pub fn handler() u64 {
-    kernel.assert(@src(), kernel.Disk.drivers.len > 0);
+    common.runtime_assert(@src(), kernel.Disk.drivers.len > 0);
     // TODO: can use more than one driver:
     const driver = @ptrCast(*Driver, kernel.Disk.drivers[0]);
     const descriptor = driver.queue.pop_used() orelse @panic("virtio block descriptor corrupted");
@@ -156,7 +156,7 @@ pub fn read_callback(disk_driver: *Disk, buffer: []u8, start_sector: u64, sector
     const driver = @ptrCast(*Driver, disk_driver);
     log.debug("Asked {} sectors from sector {}", .{ sector_count, start_sector });
     const total_size = sector_count * sector_size;
-    kernel.assert(@src(), buffer.len >= total_size);
+    common.runtime_assert(@src(), buffer.len >= total_size);
     var bytes_asked: u64 = 0;
     var sector_i: u64 = start_sector;
     while (sector_i < sector_count + start_sector) : ({
@@ -171,12 +171,12 @@ pub fn read_callback(disk_driver: *Disk, buffer: []u8, start_sector: u64, sector
         }
     }
 
-    kernel.assert(@src(), bytes_asked == driver.batch_read_byte_count);
+    common.runtime_assert(@src(), bytes_asked == driver.batch_read_byte_count);
 
     const read_bytes = driver.batch_read_byte_count;
     driver.batch_read_byte_count = 0;
     log.debug("Block device read {} bytes. Asked sector count: {}", .{ read_bytes, sector_count });
-    kernel.assert(@src(), sector_count * sector_size == read_bytes);
+    common.runtime_assert(@src(), sector_count * sector_size == read_bytes);
 
     return sector_count;
 }

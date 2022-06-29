@@ -35,7 +35,7 @@ pub fn get() MemoryMap {
         region.address = kernel.arch.dt_read_int(u64, memory_properties.value[bytes_processed..]);
         bytes_processed += @sizeOf(u64);
         const region_size = kernel.arch.dt_read_int(u64, memory_properties.value[bytes_processed..]);
-        kernel.assert(@src(), region_size % kernel.arch.page_size == 0);
+        common.runtime_assert(@src(), region_size % kernel.arch.page_size == 0);
         region.page_count = region_size / kernel.arch.page_size;
         bytes_processed += @sizeOf(u64);
     }
@@ -54,7 +54,7 @@ pub fn get() MemoryMap {
                     region.address = kernel.arch.dt_read_int(u64, reserved_memory_prop.value[bytes_processed..]);
                     bytes_processed += @sizeOf(u64);
                     const region_size = kernel.arch.dt_read_int(u64, reserved_memory_prop.value[bytes_processed..]);
-                    kernel.assert(@src(), region_size % kernel.arch.page_size == 0);
+                    common.runtime_assert(@src(), region_size % kernel.arch.page_size == 0);
                     region.page_count = region_size / kernel.arch.page_size;
                     bytes_processed += @sizeOf(u64);
                 }

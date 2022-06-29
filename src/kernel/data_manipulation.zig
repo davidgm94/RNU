@@ -68,7 +68,7 @@ pub inline fn zeroes(comptime T: type) T {
 }
 
 pub inline fn zero_a_page(page_address: u64) void {
-    kernel.assert(@src(), is_aligned(page_address, kernel.arch.page_size));
+    common.runtime_assert(@src(), is_aligned(page_address, kernel.arch.page_size));
     zero(@intToPtr([*]u8, page_address)[0..kernel.arch.page_size]);
 }
 

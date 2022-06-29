@@ -85,8 +85,8 @@ const Drive = struct {
     }
 
     pub fn access(disk: *Disk, buffer: *DMA.Buffer, disk_work: Disk.Work) u64 {
-        common.assert(@src(), buffer.completed_size == 0);
-        common.assert(@src(), buffer.address.is_page_aligned());
+        common.runtime_assert(@src(), buffer.completed_size == 0);
+        common.runtime_assert(@src(), buffer.address.is_page_aligned(kernel.arch.page_size));
         const drive = @fieldParentPtr(Drive, "disk", disk);
         const nvme = driver;
         log.debug("NVMe access", .{});
@@ -108,21 +108,24 @@ const Drive = struct {
 
         const request_byte_size = disk_work.sector_count * disk.sector_size;
         const offset = buffer.address.value % kernel.arch.page_size;
-        kernel.assert(@src(), offset == 0);
-        log.debug("Offset: 0x{x}", .{offset});
+        common.runtime_assert(@src(), offset == 0);
 
         if (request_byte_size <= 2 * kernel.arch.page_size) {
             log.debug("Buffer address: 0x{x}", .{buffer.address.value});
-            const prp1 = buffer.address.translate(&kernel.address_space) orelse TODO(@src());
-            const first_prp_length = kernel.arch.page_size - offset;
-            log.debug("TODO: is this correct? PRP1 length: {}", .{first_prp_length});
-            var prp2 = Physical.Address.temporary_invalid();
+            const prp1 = kernel.address_space.translate_address(buffer.address) orelse TODO(@src());
+            const prp1_length = kernel.arch.page_size - offset;
+            var prp2 = PhysicalAddress.temporary_invalid();
 
-            if (request_byte_size > first_prp_length) {
-                prp2 = buffer.address.offset(first_prp_length).translate(&kernel.address_space) orelse TODO(@src());
+            log.debug("Request byte size: {}. PRP 1 length: {}", .{ request_byte_size, prp1_length });
+            var prp2_length: u64 = 0;
+            if (request_byte_size > prp1_length) {
+                prp2_length = request_byte_size - prp1_length;
+                prp2 = kernel.address_space.translate_address(buffer.address.offset(prp1_length)) orelse TODO(@src());
             }
 
-            const prps = [2]Physical.Address{ prp1, prp2 };
+            const prps = [2]PhysicalAddress{ prp1, prp2 };
+            log.debug("PRP1 address: 0x{x}. PRP2 address: 0x{x}", .{ prps[0].value, prps[1].value });
+            log.debug("PRP1 length: {}. PRP2 length: {}", .{ prp1_length, prp2_length });
 
             var command = @ptrCast(*Command, @alignCast(@alignOf(Command), &nvme.io_submission_queue.?[nvme.io_submission_queue_tail * submission_queue_entry_bytes]));
             command[0] = (nvme.io_submission_queue_tail << 16) | @as(u32, if (disk_work.operation == .write) 0x01 else 0x02);
@@ -157,11 +160,12 @@ const Drive = struct {
     }
 
     pub fn get_dma_buffer(disk: *Disk, allocator: common.Allocator, sector_count: u64) common.Allocator.Error!DMA.Buffer {
-        const byte_size = kernel.align_forward(sector_count * disk.sector_size, kernel.arch.page_size);
+        const byte_size = common.align_forward(sector_count * disk.sector_size, kernel.arch.page_size);
+        const allocation_slice = try allocator.allocBytes(@intCast(u29, kernel.arch.page_size), byte_size, 0, 0);
         return DMA.Buffer{
-            .virtual_address = try allocator.allocBytes(@intCast(u29, kernel.arch.page_size), byte_size, 0, 0),
+            .address = VirtualAddress.new(@ptrToInt(allocation_slice.ptr)),
             .total_size = byte_size,
-            .complete_size = 0,
+            .completed_size = 0,
         };
     }
     //get_dma_buffer: fn (driver: *Driver, sector_count: u64) DMA.Buffer,
@@ -180,7 +184,7 @@ pub const Initialization = struct {
         driver = allocator.create(Driver) catch return Error.allocation_failure;
         driver.* = NVMe.new(nvme_device);
         const result = driver.device.enable_features(PCI.Device.Features.from_flags(&.{ .interrupts, .busmastering_dma, .memory_space_access, .bar0 }));
-        kernel.assert(@src(), result);
+        common.runtime_assert(@src(), result);
         log.debug("Device features enabled", .{});
         driver.init(allocator);
 
@@ -257,7 +261,7 @@ pub fn issue_admin_command(nvme: *NVMe, command: *Command, result: ?*u32) bool {
 
     // TODO: reset event
     @fence(.SeqCst); // best memory barrier?
-    kernel.assert(@src(), kernel.arch.are_interrupts_enabled());
+    common.runtime_assert(@src(), kernel.arch.are_interrupts_enabled());
     log.debug("Entering in a wait state", .{});
     nvme.write_sqtdbl(0, nvme.admin_submission_queue_tail);
     asm volatile ("hlt");
@@ -284,19 +288,18 @@ pub fn issue_admin_command(nvme: *NVMe, command: *Command, result: ?*u32) bool {
     return true;
 }
 
-const PRPs = [2]Physical.Address;
+const PRPs = [2]PhysicalAddress;
 
-pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
+pub fn init(nvme: *NVMe, allocator: common.Allocator) void {
     nvme.capabilities = nvme.read(cap);
     nvme.version = nvme.read(vs);
     log.debug("Capabilities = {}. Version = {}", .{ nvme.capabilities, nvme.version });
 
-    kernel.assert(@src(), nvme.version.major == 1 and nvme.version.minor == 4);
+    common.runtime_assert(@src(), nvme.version.major == 1 and nvme.version.minor == 4);
     if (nvme.version.major > 1) @panic("version too new");
     if (nvme.version.major < 1) @panic("f1");
     if (nvme.version.major == 1 and nvme.version.minor < 1) @panic("f2");
     if (nvme.capabilities.mqes == 0) @panic("f3");
-    kernel.assert_unsafe(@bitOffsetOf(CAP, "nssrs") == 36);
     if (!nvme.capabilities.css.nvm_command_set) @panic("f4");
     if (nvme.capabilities.mpsmin < kernel.arch.page_shifter - 12) @panic("f5");
     if (nvme.capabilities.mpsmax < kernel.arch.page_shifter - 12) @panic("f6");
@@ -349,10 +352,10 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
 
     const admin_submission_queue_size = admin_queue_entry_count * submission_queue_entry_bytes;
     const admin_completion_queue_size = admin_queue_entry_count * completion_queue_entry_bytes;
-    const admin_queue_page_count = kernel.align_forward(admin_submission_queue_size, kernel.arch.page_size) + kernel.align_forward(admin_completion_queue_size, kernel.arch.page_size);
+    const admin_queue_page_count = common.align_forward(admin_submission_queue_size, kernel.arch.page_size) + common.align_forward(admin_completion_queue_size, kernel.arch.page_size);
     const admin_queue_physical_address = kernel.Physical.Memory.allocate_pages(admin_queue_page_count) orelse @panic("admin queue");
     const admin_submission_queue_physical_address = admin_queue_physical_address;
-    const admin_completion_queue_physical_address = admin_queue_physical_address.offset(kernel.align_forward(admin_submission_queue_size, kernel.arch.page_size));
+    const admin_completion_queue_physical_address = admin_queue_physical_address.offset(common.align_forward(admin_submission_queue_size, kernel.arch.page_size));
 
     nvme.write(asq, ASQ{
         .reserved = 0,
@@ -402,7 +405,7 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
     const identify_data = identify_data_virtual_address.access([*]u8);
 
     {
-        var command = kernel.zeroes(Command);
+        var command = common.zeroes(Command);
         command[0] = 0x06;
         command[6] = @truncate(u32, identify_data_physical_address.value);
         command[7] = @truncate(u32, identify_data_physical_address.value >> 32);
@@ -421,7 +424,7 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
 
         nvme.rtd3_entry_latency_us = @ptrCast(*u32, @alignCast(@alignOf(u32), &identify_data[88])).*;
         nvme.maximum_data_outstanding_commands = @ptrCast(*u16, @alignCast(@alignOf(u16), &identify_data[514])).*;
-        kernel.copy(u8, &nvme.model, identify_data[24 .. 24 + @sizeOf(@TypeOf(nvme.model))]);
+        common.copy(u8, &nvme.model, identify_data[24 .. 24 + @sizeOf(@TypeOf(nvme.model))]);
         log.debug("NVMe model: {s}", .{nvme.model});
 
         if (nvme.rtd3_entry_latency_us > 250 * 1000) {
@@ -436,7 +439,7 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
     }
 
     {
-        var command = kernel.zeroes(Command);
+        var command = common.zeroes(Command);
         command[0] = 0x09;
         command[10] = 0x80;
         command[11] = 0;
@@ -445,15 +448,15 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
     }
 
     {
-        const size = kernel.align_forward(io_queue_entry_count * completion_queue_entry_bytes, kernel.arch.page_size);
+        const size = common.align_forward(io_queue_entry_count * completion_queue_entry_bytes, kernel.arch.page_size);
         const page_count = kernel.bytes_to_pages(size, .must_be_exact);
         const queue_physical_address = kernel.Physical.Memory.allocate_pages(page_count) orelse @panic("ph comp");
 
         const physical_region = kernel.Physical.Memory.Region.new(queue_physical_address, size);
-        physical_region.map(&kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
+        Physical.Memory.map(physical_region, &kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
         nvme.io_completion_queue = queue_physical_address.to_higher_half_virtual_address().access([*]u8);
 
-        var command = kernel.zeroes(Command);
+        var command = common.zeroes(Command);
         command[0] = 0x05;
         command[6] = @truncate(u32, queue_physical_address.value);
         command[7] = @truncate(u32, queue_physical_address.value >> 32);
@@ -464,15 +467,15 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
     }
 
     {
-        const size = kernel.align_forward(io_queue_entry_count * submission_queue_entry_bytes, kernel.arch.page_size);
+        const size = common.align_forward(io_queue_entry_count * submission_queue_entry_bytes, kernel.arch.page_size);
         const page_count = kernel.bytes_to_pages(size, .must_be_exact);
         const queue_physical_address = kernel.Physical.Memory.allocate_pages(page_count) orelse @panic("ph comp");
 
         const physical_region = kernel.Physical.Memory.Region.new(queue_physical_address, size);
-        physical_region.map(&kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
+        Physical.Memory.map(physical_region, &kernel.address_space, queue_physical_address.to_higher_half_virtual_address(), kernel.Virtual.AddressSpace.Flags.from_flag(.read_write));
         nvme.io_submission_queue = queue_physical_address.to_higher_half_virtual_address().access([*]u8);
 
-        var command = kernel.zeroes(Command);
+        var command = common.zeroes(Command);
         command[0] = 0x01;
         command[6] = @truncate(u32, queue_physical_address.value);
         command[7] = @truncate(u32, queue_physical_address.value >> 32);
@@ -496,7 +499,7 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
     var drives: [64]Drive = undefined;
     namespace: while (true) {
         {
-            var command = kernel.zeroes(Command);
+            var command = common.zeroes(Command);
             command[0] = 0x06;
             command[1] = nsid;
             command[6] = @truncate(u32, identify_data_physical_address.value);
@@ -513,7 +516,7 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
             log.debug("nsid", .{});
 
             {
-                var command = kernel.zeroes(Command);
+                var command = common.zeroes(Command);
                 command[0] = 0x06;
                 command[1] = nsid;
                 command[6] = @truncate(u32, identify_data_physical_address.value + 0x1000);
@@ -533,19 +536,19 @@ pub fn init(nvme: *NVMe, allocator: kernel.Allocator) void {
             const sector_size = @as(u64, 1) << sector_bytes_exponent;
             const drive = &drives[drive_count];
             drive_count += 1;
-            kernel.assert(@src(), drive_count < drives.len);
+            common.runtime_assert(@src(), drive_count < drives.len);
             drive.* = Drive.new(sector_size, nsid);
             log.debug("New drive registered: {}", .{drive});
         }
     }
 
     nvme.drives = allocator.alloc(Drive, drive_count) catch kernel.crash("unable to allocate for NVMe drives", .{});
-    kernel.copy(Drive, nvme.drives, drives[0..drive_count]);
+    common.copy(Drive, nvme.drives, drives[0..drive_count]);
     for (nvme.drives) |*drive| {
         kernel.drivers.Driver(Disk, Drive).init(allocator, drive) catch kernel.crash("Failed to initialized device", .{});
     }
 
-    kernel.assert(@src(), drive_count == 1);
+    common.runtime_assert(@src(), drive_count == 1);
 }
 
 pub const Callback = fn (nvme: *NVMe, line: u64) bool;
@@ -638,7 +641,7 @@ fn CommandDword0(comptime Opcode: type) type {
         };
 
         comptime {
-            kernel.assert_unsafe(@sizeOf(CommandDword0) == @sizeOf(u32));
+            common.comptime_assert(@sizeOf(CommandDword0) == @sizeOf(u32));
         }
     };
 }
@@ -648,7 +651,7 @@ const QueueType = enum(u2) {
     fabrics = 1,
     io = 2,
 
-    const count = kernel.enum_values(QueueType).len;
+    const count = common.enum_values(QueueType).len;
 };
 const AdminOpcode = enum(u8) {
     delete_io_submission_queue = 0x00,
@@ -735,7 +738,7 @@ const AdminCommonCommandFormat = packed struct {
     command_dword15: u4,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(AdminCommonCommandFormat) == @sizeOf(u64));
+        common.comptime_assert(@sizeOf(AdminCommonCommandFormat) == @sizeOf(u64));
     }
 };
 
@@ -749,7 +752,7 @@ const CommonCompletionQueueEntry = packed struct {
         sqid: u16,
 
         comptime {
-            kernel.assert_unsafe(@sizeOf(DW2) == @sizeOf(u32));
+            common.comptime_assert(@sizeOf(DW2) == @sizeOf(u32));
         }
     };
 
@@ -759,7 +762,7 @@ const CommonCompletionQueueEntry = packed struct {
         status_field: StatusField,
 
         comptime {
-            kernel.assert_unsafe(@sizeOf(DW3) == @sizeOf(u32));
+            common.comptime_assert(@sizeOf(DW3) == @sizeOf(u32));
         }
     };
 
@@ -986,7 +989,8 @@ const CAP = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CAP) == @sizeOf(u64));
+        common.comptime_assert(@sizeOf(CAP) == @sizeOf(u64));
+        common.comptime_assert(@bitOffsetOf(CAP, "nssrs") == 36);
     }
 };
 
@@ -1030,7 +1034,7 @@ const CC = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CC) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CC) == @sizeOf(u32));
     }
 };
 
@@ -1050,7 +1054,7 @@ const CSTS = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CSTS) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CSTS) == @sizeOf(u32));
     }
 };
 
@@ -1061,7 +1065,7 @@ const AQA = packed struct {
     reserved2: u4,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(AQA) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(AQA) == @sizeOf(u32));
     }
 };
 
@@ -1070,7 +1074,7 @@ const ASQ = packed struct {
     asqb: u52,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(ASQ) == @sizeOf(u64));
+        common.comptime_assert(@sizeOf(ASQ) == @sizeOf(u64));
     }
 };
 
@@ -1079,7 +1083,7 @@ const ACQ = packed struct {
     acqb: u52,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(ACQ) == @sizeOf(u64));
+        common.comptime_assert(@sizeOf(ACQ) == @sizeOf(u64));
     }
 };
 
@@ -1095,7 +1099,7 @@ const CMBLOC = packed struct {
     offset: u20,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CMBLOC) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CMBLOC) == @sizeOf(u32));
     }
 };
 
@@ -1121,7 +1125,7 @@ const CMBSZ = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CMBSZ) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CMBSZ) == @sizeOf(u32));
     }
 };
 
@@ -1140,7 +1144,7 @@ const BPINFO = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(BPINFO) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(BPINFO) == @sizeOf(u32));
     }
 };
 
@@ -1151,7 +1155,7 @@ const BPRSEL = packed struct {
     bpid: bool,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(BPRSEL) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(BPRSEL) == @sizeOf(u32));
     }
 };
 
@@ -1160,7 +1164,7 @@ const BPMBL = packed struct {
     bmbba: u52,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(BPMBL) == @sizeOf(u64));
+        common.comptime_assert(@sizeOf(BPMBL) == @sizeOf(u64));
     }
 };
 
@@ -1171,7 +1175,7 @@ const CMBMSC = packed struct {
     cba: u52,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CMBMSC) == @sizeOf(u64));
+        common.comptime_assert(@sizeOf(CMBMSC) == @sizeOf(u64));
     }
 };
 
@@ -1180,7 +1184,7 @@ const CMBSTS = packed struct {
     reserved: u31,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CMBSTS) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CMBSTS) == @sizeOf(u32));
     }
 };
 
@@ -1199,7 +1203,7 @@ const CMBEBS = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CMBEBS) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CMBEBS) == @sizeOf(u32));
     }
 };
 
@@ -1217,7 +1221,7 @@ const CMBSWTP = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CMBSWTP) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CMBSWTP) == @sizeOf(u32));
     }
 };
 
@@ -1226,7 +1230,7 @@ const CRTO = packed struct {
     crimt: u16,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(CRTO) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(CRTO) == @sizeOf(u32));
     }
 };
 
@@ -1249,7 +1253,7 @@ const PMRCAP = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(PMRCAP) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(PMRCAP) == @sizeOf(u32));
     }
 };
 
@@ -1258,7 +1262,7 @@ const PMRCTL = packed struct {
     reserved: u31,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(PMRCTL) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(PMRCTL) == @sizeOf(u32));
     }
 };
 
@@ -1277,7 +1281,7 @@ const PMRSTS = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(PMRSTS) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(PMRSTS) == @sizeOf(u32));
     }
 };
 
@@ -1295,7 +1299,7 @@ const PMREBS = packed struct {
         _,
     };
     comptime {
-        kernel.assert_unsafe(@sizeOf(PMREBS) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(PMREBS) == @sizeOf(u32));
     }
 };
 
@@ -1313,7 +1317,7 @@ const PMRSWTP = packed struct {
     };
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(PMRSWTP) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(PMRSWTP) == @sizeOf(u32));
     }
 };
 
@@ -1324,6 +1328,6 @@ const PMRMSCL = packed struct {
     cba: u20,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(PMRMSCL) == @sizeOf(u32));
+        common.comptime_assert(@sizeOf(PMRMSCL) == @sizeOf(u32));
     }
 };

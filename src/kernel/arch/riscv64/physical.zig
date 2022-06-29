@@ -30,7 +30,7 @@ pub fn init() void {
     const memory_map = MemoryMap.get();
     reserved_regions.ptr = &_reserved;
     reserved_regions.len = memory_map.reserved.len;
-    kernel.copy(Region.Descriptor, reserved_regions, memory_map.reserved);
+    common.copy(Region.Descriptor, reserved_regions, memory_map.reserved);
 
     const kernel_start = kernel.bounds.get_start();
     const kernel_end = kernel.bounds.get_end();
@@ -39,12 +39,12 @@ pub fn init() void {
     kernel_region = &reserved_regions[reserved_regions.len - 1];
     kernel_region.address = kernel_start;
     kernel_region.page_count = kernel_size / kernel.arch.page_size;
-    kernel.assert(@src(), kernel_size & (kernel.arch.page_size - 1) == 0);
+    common.runtime_assert(@src(), kernel_size & (kernel.arch.page_size - 1) == 0);
 
     reserved_regions.len += 1;
     device_tree_region = &reserved_regions[reserved_regions.len - 1];
     device_tree_region.address = kernel.arch.device_tree.base_address;
-    device_tree_region.page_count = kernel.align_forward(kernel.arch.device_tree.header.size, kernel.arch.page_size) / kernel.arch.page_size;
+    device_tree_region.page_count = common.align_forward(kernel.arch.device_tree.header.size, kernel.arch.page_size) / kernel.arch.page_size;
 
     log.debug("Reserved regions", .{});
     for (reserved_regions) |reserved, i| {
@@ -66,7 +66,7 @@ pub fn init() void {
                 const end_matches = reserved.address + reserved_size == available.descriptor.address + available_size;
 
                 if (!start_matches and !end_matches) {
-                    kernel.assert(@src(), available_i == available_regions.len - 1);
+                    common.runtime_assert(@src(), available_i == available_regions.len - 1);
                     const first = available;
                     available_regions.len += 1;
                     const second = &available_regions[available_i + 1];
@@ -76,7 +76,7 @@ pub fn init() void {
                     second.descriptor.page_count = (original_end_address - second.descriptor.address) / kernel.arch.page_size;
                     first.descriptor.page_count -= second.descriptor.page_count + reserved.page_count;
                 } else if (start_matches and end_matches) {
-                    kernel.assert(@src(), available_i == available_regions.len - 1);
+                    common.runtime_assert(@src(), available_i == available_regions.len - 1);
                     available_regions.len -= 1;
                 } else if (start_matches) {
                     available.descriptor.address = reserved.address + reserved_size;
@@ -102,7 +102,7 @@ pub fn init() void {
         // Align to u64
         const bitset_len = (region.descriptor.page_count / @bitSizeOf(u64)) + @boolToInt(region.descriptor.page_count % @bitSizeOf(u64) != 0);
         const bytes_to_allocate = bitset_len * @sizeOf(u64);
-        bitset_byte_count = kernel.align_forward(bitset_byte_count, kernel.arch.page_size);
+        bitset_byte_count = common.align_forward(bitset_byte_count, kernel.arch.page_size);
         region.bitset.ptr = @ptrCast([*]u64, @alignCast(kernel.arch.page_size, &bitset_memory[bitset_byte_count]));
         region.bitset.len = bytes_to_allocate / @sizeOf(u64);
         bitset_byte_count += bytes_to_allocate;
@@ -115,7 +115,7 @@ pub fn allocate1(page_count: u64) ?u64 {
     for (available_regions) |*region| {
         if (region.descriptor.page_count - region.allocated_page_count >= page_count) {
             const supposed_bitset_size = region.descriptor.page_count / @bitSizeOf(u64);
-            kernel.assert(@src(), region.bitset.len >= supposed_bitset_size);
+            common.runtime_assert(@src(), region.bitset.len >= supposed_bitset_size);
             var region_allocated_page_count: u64 = 0;
 
             const start_index = if (take_hint) region.allocated_page_count / @bitSizeOf(u64) else 0;
@@ -145,19 +145,19 @@ pub fn allocate1(page_count: u64) ?u64 {
             if (region_allocated_page_count == page_count) {
                 const result = first_address;
                 region.allocated_page_count += region_allocated_page_count;
-                kernel.assert(@src(), result != 0);
+                common.runtime_assert(@src(), result != 0);
                 return result;
             }
 
             log.debug("Asked page count: {}. Pages to deallocate: {}. Region page count: {}. Region already allocated: {}", .{ page_count, region_allocated_page_count, region.descriptor.page_count, region.allocated_page_count });
 
-            kernel.assert(@src(), region.allocated_page_count + page_count > region.descriptor.page_count);
-            kernel.assert(@src(), first_address != 0);
+            common.runtime_assert(@src(), region.allocated_page_count + page_count > region.descriptor.page_count);
+            common.runtime_assert(@src(), first_address != 0);
             const original_allocated_page_count = region.allocated_page_count - region_allocated_page_count;
             var byte = original_allocated_page_count / @bitSizeOf(u64);
             var bit = original_allocated_page_count % @bitSizeOf(u64);
 
-            kernel.assert(@src(), region_allocated_page_count > 0);
+            common.runtime_assert(@src(), region_allocated_page_count > 0);
 
             if (bit > 0) {
                 while (bit < @bitSizeOf(u64)) : (bit += 1) {

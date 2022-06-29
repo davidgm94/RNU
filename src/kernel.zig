@@ -8,7 +8,6 @@ pub const Virtual = @import("kernel/virtual.zig");
 pub const bounds = arch.Bounds;
 pub const Spinlock = arch.Spinlock;
 pub const AVL = @import("kernel/avl.zig");
-pub const Heap = @import("kernel/heap.zig");
 pub const CoreHeap = @import("kernel/core_heap.zig");
 pub const PSF1 = @import("kernel/psf1.zig");
 pub const scheduler = @import("kernel/scheduler.zig");
@@ -81,3 +80,7 @@ pub fn TODO(src: common.SourceLocation) noreturn {
 }
 
 const VirtualAddress = common.VirtualAddress;
+
+pub inline fn bytes_to_pages(bytes: u64, comptime must_be_exact: common.MustBeExact) u64 {
+    return common.bytes_to_pages_extended(bytes, kernel.arch.page_size, must_be_exact);
+}

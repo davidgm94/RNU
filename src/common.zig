@@ -5,6 +5,7 @@ const root = @import("root");
 pub const FS = @import("common/fs.zig");
 pub const VirtualAddress = @import("common/virtual_address.zig");
 pub const PhysicalAddress = @import("common/physical_address.zig");
+pub const PhysicalMemoryRegion = @import("common/physical_memory_region.zig");
 
 // ARCH
 pub const Cpu = std.Target.Cpu;
@@ -46,11 +47,13 @@ pub const Writer = std.io.Writer;
 
 // MEMORY MANIPULATION
 pub const equal = std.mem.eql;
+pub const length = std.mem.len;
 pub const starts_with = std.mem.startsWith;
 pub const ends_with = std.mem.endsWith;
 pub const copy = std.mem.copy;
 pub const as_bytes = std.mem.asBytes;
-const internal_read_int_big = std.mem.readIntBig;
+pub const internal_read_int_big = std.mem.readIntBig;
+pub const read_int_slice_big_endian = std.mem.readIntSliceBig;
 
 // INTERNAL
 const internal_format = std.fmt.format;
@@ -124,12 +127,12 @@ pub inline fn zeroes(comptime T: type) T {
     return result;
 }
 
-pub inline fn static_assert(condition: bool) void {
+pub inline fn comptime_assert(condition: bool) void {
     if (!is_comptime()) unreachable;
     if (!condition) unreachable;
 }
 
-pub inline fn assert(source_location: SourceLocation, condition: bool) void {
+pub inline fn runtime_assert(source_location: SourceLocation, condition: bool) void {
     if (is_comptime()) unreachable;
     if (!condition) {
         panic(source_location, "Assert failed", .{});
@@ -160,9 +163,9 @@ pub inline fn remainder_division_maybe_exact(dividend: u64, divisor: u64, compti
 }
 
 pub fn cstr_len(cstr: [*:0]const u8) u64 {
-    var length: u64 = 0;
-    while (cstr[length] != 0) : (length += 1) {}
-    return length;
+    var len: u64 = 0;
+    while (cstr[len] != 0) : (len += 1) {}
+    return len;
 }
 
 pub fn Bitflag(comptime is_volatile: bool, comptime EnumT: type) type {
@@ -249,27 +252,31 @@ const is_root_package_build = @hasDecl(root, "Builder");
 
 pub fn TODO(src: SourceLocation) noreturn {
     _ = src;
-    const decls = @typeInfo(root).Struct.decls;
-    for (decls) |decl| {
-        @compileLog(decl.name);
-    }
-    if (is_root_package_build) {
-        unreachable; //std.debug.panic("TODO at {s}:{}:{} {s}()", .{ src.file, src.line, src.column, src.fn_name });
-    } else {
-        unreachable; //root.crash("TODO at {s}:{}:{} {s}()", .{ src.file, src.line, src.column, src.fn_name });
-    }
+    //const decls = @typeInfo(root).Struct.decls;
+    //for (decls) |decl| {
+    //@compileLog(decl.name);
+    //}
+    log.err("TODO at {s}:{}:{} {s}()", .{ src.file, src.line, src.column, src.fn_name });
+    unreachable;
+    // TODO
+    //if (is_root_package_build) {
+    //unreachable; //std.debug.panic("TODO at {s}:{}:{} {s}()", .{ src.file, src.line, src.column, src.fn_name });
+    //} else {
+    //unreachable; //root.crash("TODO at {s}:{}:{} {s}()", .{ src.file, src.line, src.column, src.fn_name });
+    //}
 }
 pub fn panic(src: SourceLocation, comptime message: []const u8, args: anytype) noreturn {
     _ = src;
     _ = message;
     _ = args;
-    if (is_root_package_build) {
-        log.err("PANIC at {s}:{}:{} {s}()", .{ src.file, src.line, src.column, src.fn_name });
-        unreachable;
-    } else {
-        //root.crash(message, args);
-        unreachable;
-    }
+    // TODO:
+    //if (is_root_package_build) {
+    log.err("PANIC at {s}:{}:{} {s}()", .{ src.file, src.line, src.column, src.fn_name });
+    unreachable;
+    //} else {
+    ////root.crash(message, args);
+    //unreachable;
+    //}
 }
 
 /// @Hack This currently works to determine if the code is being executed at compile time or at run time.

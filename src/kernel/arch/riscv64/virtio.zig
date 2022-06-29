@@ -159,19 +159,19 @@ pub const MMIO = struct {
         // TODO: distinguist between physical and virtual
         queue.num = 0;
         queue.last_seen_used = 0;
-        var ptr: u64 = kernel.align_forward(queue_physical + @sizeOf(SplitQueue), SplitQueue.descriptor_table_alignment);
+        var ptr: u64 = common.align_forward(queue_physical + @sizeOf(SplitQueue), SplitQueue.descriptor_table_alignment);
         queue.descriptors = @intToPtr(@TypeOf(queue.descriptors), ptr);
         // identity-mapped
         const physical = @ptrToInt(queue);
         const descriptor = physical + @sizeOf(SplitQueue);
         ptr += ring_size * @sizeOf(Descriptor);
-        ptr = kernel.align_forward(ptr, SplitQueue.available_ring_alignment);
+        ptr = common.align_forward(ptr, SplitQueue.available_ring_alignment);
         const available = ptr;
         queue.available = @intToPtr(@TypeOf(queue.available), available);
         queue.available.flags = 0;
         queue.available.index = 0;
         ptr += @sizeOf(Available);
-        ptr = kernel.align_forward(ptr, SplitQueue.used_ring_alignment);
+        ptr = common.align_forward(ptr, SplitQueue.used_ring_alignment);
         const used = ptr;
         queue.used = @intToPtr(@TypeOf(queue.used), used);
         queue.used.flags = 0;
@@ -193,7 +193,7 @@ pub const MMIO = struct {
         return queue;
     }
 
-    pub const DeviceStatus = kernel.Bitflag(true, enum(u32) {
+    pub const DeviceStatus = common.Bitflag(true, enum(u32) {
         acknowledge = 0,
         driver = 1,
         driver_ok = 2,
@@ -219,7 +219,7 @@ pub const MMIO = struct {
     pub fn debug_device_status(mmio: *volatile MMIO) void {
         log.debug("Reading device status...", .{});
         const device_status = mmio.device_status;
-        for (kernel.enum_values(DeviceStatus)) |flag| {
+        for (common.enum_values(DeviceStatus)) |flag| {
             if (device_status & @enumToInt(flag) != 0) {
                 log.debug("Flag set: {}", .{flag});
             }
@@ -234,13 +234,13 @@ pub const MMIO = struct {
         mmio.device_feature_selector = 0;
 
         const features: u64 = (@intCast(u64, high) << 32) | low;
-        for (kernel.enum_values(Features)) |feature| {
+        for (common.enum_values(Features)) |feature| {
             if (features & (@intCast(u64, 1) << @enumToInt(feature)) != 0) {
                 log.debug("Device has feature: {s}, bit {}", .{ @tagName(feature), @enumToInt(feature) });
             }
         }
 
-        for (kernel.enum_values(FeaturesEnum)) |feature| {
+        for (common.enum_values(FeaturesEnum)) |feature| {
             if (features & (@intCast(u64, 1) << @enumToInt(feature)) != 0) {
                 log.debug("Device has {}: {s}, bit {}", .{ FeaturesEnum, @tagName(feature), @enumToInt(feature) });
             }
@@ -323,7 +323,7 @@ pub const SplitQueue = struct {
     }
 };
 
-const InterruptStatus = kernel.Bitflag(true, enum(u32) {
+const InterruptStatus = common.Bitflag(true, enum(u32) {
     used_buffer = 0,
     configuration_change = 1,
 });

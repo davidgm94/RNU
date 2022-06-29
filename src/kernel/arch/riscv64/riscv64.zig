@@ -45,7 +45,7 @@ pub const LocalStorage = struct {
     padding: [page_size - @sizeOf(Context)]u8,
 
     comptime {
-        kernel.assert_unsafe(@sizeOf(LocalStorage) == page_size);
+        common.comptime_assert(@sizeOf(LocalStorage) == page_size);
     }
 
     pub fn init(self: *@This(), hart_id: u64, boot_hart: bool) void {

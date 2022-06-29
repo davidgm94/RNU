@@ -17,7 +17,7 @@ pub const Descriptor = packed struct {
     reserved: u32 = 0,
 
     comptime {
-        common.static_assert(@sizeOf(Descriptor) == 16);
+        common.comptime_assert(@sizeOf(Descriptor) == 16);
     }
 };
 
@@ -36,7 +36,7 @@ pub const Struct = packed struct {
     IO_map_base_address: u16 = 104,
 
     comptime {
-        common.static_assert(@sizeOf(Struct) == 0x68);
+        common.comptime_assert(@sizeOf(Struct) == 0x68);
     }
 
     pub fn get_descriptor(tss: *const Struct) Descriptor {

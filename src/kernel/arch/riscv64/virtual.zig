@@ -13,11 +13,11 @@ const pte_t = usize;
 const MAXVA: usize = (1 << (9 + 9 + 9 + 12 - 1));
 
 fn page_round_up(address: u64) u64 {
-    return kernel.align_forward(address, kernel.arch.page_size);
+    return common.align_forward(address, kernel.arch.page_size);
 }
 
 fn page_round_down(address: u64) u64 {
-    return kernel.align_backward(address, kernel.arch.page_size);
+    return common.align_backward(address, kernel.arch.page_size);
 }
 
 /// kernel_vm_init initialize the kernel_init_pagetable during initialization phase
@@ -26,7 +26,7 @@ pub fn init() void {
     kernel.address_space.range.end = 0x1000_0000;
     // Initialize the kernel pagetable
     const new_page = Physical.allocate1(1) orelse @panic("Failed to allocate kernel pagetable. Out of memory");
-    kernel.zero_a_page(new_page);
+    common.zero_a_page(new_page);
 
     kernel_init_pagetable = @intToPtr([*]usize, new_page);
 
@@ -98,9 +98,9 @@ pub fn map(start: u64, page_count: u64) void {
 }
 
 fn map_pages(pagetable: pagetable_t, virtual_addr: usize, physical_addr: usize, page_count: usize, permission: usize, allow_remap: bool) void {
-    kernel.assert(@src(), page_count != 0);
-    kernel.assert(@src(), kernel.is_aligned(virtual_addr, page_size));
-    kernel.assert(@src(), kernel.is_aligned(physical_addr, page_size));
+    common.runtime_assert(@src(), page_count != 0);
+    common.runtime_assert(@src(), common.is_aligned(virtual_addr, page_size));
+    common.runtime_assert(@src(), common.is_aligned(physical_addr, page_size));
 
     // Security check for permission
     if (permission & ~(arch.PTE_FLAG_MASK) != 0) {
@@ -156,7 +156,7 @@ fn walk(pagetable: pagetable_t, virtual_addr: usize, alloc: bool) ?pte_t {
                 // Allocate a new page if not valid and need to allocate
                 // This already identity maps the page as it has to zero the page out
                 if (Physical.allocate1(1)) |page_physical| {
-                    kernel.zero_a_page(kernel.arch.Virtual.AddressSpace.physical_to_virtual(page_physical));
+                    common.zero_a_page(kernel.arch.Virtual.AddressSpace.physical_to_virtual(page_physical));
                     pg_iter = @intToPtr([*]usize, page_physical);
                     pte.* = arch.PA_TO_PTE(page_physical) | arch.PTE_VALID;
                 } else {
@@ -237,7 +237,7 @@ pub const AddressSpace = struct {
         const needed_page_count = kernel.bytes_to_pages(size);
 
         if (needed_page_count == 0) @panic("Reserved called without needing memory");
-        kernel.assert(@src(), self.lock.is_locked());
+        common.runtime_assert(@src(), self.lock.is_locked());
 
         // TODO: This is wrong in so many ways
         const physical = Physical.allocate(needed_page_count) orelse return null;

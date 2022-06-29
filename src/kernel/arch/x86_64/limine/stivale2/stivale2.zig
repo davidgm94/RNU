@@ -2,10 +2,11 @@ const kernel = @import("root");
 const common = kernel.common;
 const stivale = @import("header.zig");
 const log = common.log.scoped(.stivale);
-const assert = kernel.assert_unsafe;
+const assert = common.runtime_assert;
 const x86_64 = @import("../../../x86_64.zig");
 
 const VirtualAddress = common.VirtualAddress;
+const PhysicalAddress = common.PhysicalAddress;
 
 pub const Struct = stivale.Struct;
 
@@ -28,20 +29,20 @@ pub fn process_bootloader_information(stivale2_struct: *Struct) Error!void {
 }
 
 pub fn find(comptime StructT: type, stivale2_struct: *Struct) ?*align(1) StructT {
-    var tag_opt = get_tag_from_physical(kernel.Physical.Address.new(stivale2_struct.tags));
+    var tag_opt = get_tag_from_physical(PhysicalAddress.new(stivale2_struct.tags));
 
     while (tag_opt) |tag| {
         if (tag.identifier == StructT.id) {
             return @ptrCast(*align(1) StructT, tag);
         }
 
-        tag_opt = get_tag_from_physical(kernel.Physical.Address.new(tag.next));
+        tag_opt = get_tag_from_physical(PhysicalAddress.new(tag.next));
     }
 
     return null;
 }
 
-fn get_tag_from_physical(physical_address: kernel.Physical.Address) ?*align(1) stivale.Tag {
+fn get_tag_from_physical(physical_address: PhysicalAddress) ?*align(1) stivale.Tag {
     return if (kernel.Virtual.initialized) physical_address.access_higher_half(?*align(1) stivale.Tag) else physical_address.access_identity(?*align(1) stivale.Tag);
 }
 
@@ -60,7 +61,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
     const host_entry = blk: {
         for (memory_map_entries) |*entry| {
             if (entry.type == .usable) {
-                const bitset = kernel.Physical.Memory.Map.Entry.get_bitset_from_address_and_size(kernel.Physical.Address.new(entry.address), entry.size);
+                const bitset = kernel.Physical.Memory.Map.Entry.get_bitset_from_address_and_size(PhysicalAddress.new(entry.address), entry.size);
                 const bitset_size = bitset.len * @sizeOf(kernel.Physical.Memory.Map.Entry.BitsetBaseType);
                 // INFO: this is separated since the bitset needs to be in a different page than the memory map
                 const bitset_page_count = kernel.bytes_to_pages(bitset_size, .can_be_not_exact);
@@ -69,12 +70,12 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
                 const memory_map_page_count = kernel.bytes_to_pages(memory_map_allocation_size, .can_be_not_exact);
                 const total_allocated_page_count = bitset_page_count + memory_map_page_count;
                 const total_allocation_size = kernel.arch.page_size * total_allocated_page_count;
-                kernel.assert(@src(), entry.size > total_allocation_size);
-                result.usable = @intToPtr([*]kernel.Physical.Memory.Map.Entry, entry.address + kernel.align_forward(bitset_size, kernel.arch.page_size))[0..1];
+                common.runtime_assert(@src(), entry.size > total_allocation_size);
+                result.usable = @intToPtr([*]kernel.Physical.Memory.Map.Entry, entry.address + common.align_forward(bitset_size, kernel.arch.page_size))[0..1];
                 var block = &result.usable[0];
                 block.* = kernel.Physical.Memory.Map.Entry{
                     .descriptor = kernel.Physical.Memory.Region{
-                        .address = kernel.Physical.Address.new(entry.address),
+                        .address = PhysicalAddress.new(entry.address),
                         .size = entry.size,
                     },
                     .allocated_size = total_allocation_size,
@@ -100,7 +101,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
             var result_entry = &result.usable[index];
             result_entry.* = kernel.Physical.Memory.Map.Entry{
                 .descriptor = kernel.Physical.Memory.Region{
-                    .address = kernel.Physical.Address.new(entry.address),
+                    .address = PhysicalAddress.new(entry.address),
                     .size = entry.size,
                 },
                 .allocated_size = 0,
@@ -109,7 +110,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
 
             const bitset = result_entry.get_bitset();
             const bitset_size = bitset.len * @sizeOf(kernel.Physical.Memory.Map.Entry.BitsetBaseType);
-            result_entry.allocated_size = kernel.align_forward(bitset_size, kernel.arch.page_size);
+            result_entry.allocated_size = common.align_forward(bitset_size, kernel.arch.page_size);
             result_entry.setup_bitset();
         }
     }
@@ -123,7 +124,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
             var result_entry = &result.reclaimable[index];
             result_entry.* = kernel.Physical.Memory.Map.Entry{
                 .descriptor = kernel.Physical.Memory.Region{
-                    .address = kernel.Physical.Address.new(entry.address),
+                    .address = PhysicalAddress.new(entry.address),
                     .size = entry.size,
                 },
                 .allocated_size = 0,
@@ -142,7 +143,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
             result.framebuffer.len += 1;
             var result_entry = &result.framebuffer[index];
             result_entry.* = kernel.Physical.Memory.Region{
-                .address = kernel.Physical.Address.new(entry.address),
+                .address = PhysicalAddress.new(entry.address),
                 .size = entry.size,
             };
 
@@ -158,7 +159,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
             result.kernel_and_modules.len += 1;
             var result_entry = &result.kernel_and_modules[index];
             result_entry.* = kernel.Physical.Memory.Region{
-                .address = kernel.Physical.Address.new(entry.address),
+                .address = PhysicalAddress.new(entry.address),
                 .size = entry.size,
             };
 
@@ -166,7 +167,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
         }
     }
 
-    kernel.assert(@src(), result.kernel_and_modules.len == 1);
+    common.runtime_assert(@src(), result.kernel_and_modules.len == 1);
 
     result.reserved.ptr = @intToPtr(@TypeOf(result.reserved.ptr), @ptrToInt(result.kernel_and_modules.ptr) + (@sizeOf(kernel.Physical.Memory.Region) * result.kernel_and_modules.len));
 
@@ -176,7 +177,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
             result.reserved.len += 1;
             var result_entry = &result.reserved[index];
             result_entry.* = kernel.Physical.Memory.Region{
-                .address = kernel.Physical.Address.new(entry.address),
+                .address = PhysicalAddress.new(entry.address),
                 .size = entry.size,
             };
 
@@ -192,7 +193,7 @@ pub fn process_memory_map(stivale2_struct: *Struct) Error!kernel.Physical.Memory
 pub fn process_higher_half_direct_map(stivale2_struct: *Struct) Error!VirtualAddress {
     const hhdm_struct = find(Struct.HHDM, stivale2_struct) orelse return Error.higher_half_direct_map;
     log.debug("HHDM: 0x{x}", .{hhdm_struct.addr});
-    return kernel.Virtual.Address.new(hhdm_struct.addr);
+    return VirtualAddress.new(hhdm_struct.addr);
 }
 
 pub fn process_pmrs(stivale2_struct: *Struct) Error![]kernel.Virtual.Memory.RegionWithPermissions {
@@ -203,14 +204,14 @@ pub fn process_pmrs(stivale2_struct: *Struct) Error![]kernel.Virtual.Memory.Regi
     if (pmrs.len == 0) return Error.pmrs;
     log.debug("past this", .{});
 
-    kernel.assert(@src(), kernel.Virtual.initialized);
-    const kernel_section_allocation_size = kernel.align_forward(@sizeOf(kernel.Virtual.Memory.RegionWithPermissions) * pmrs.len, kernel.arch.page_size);
+    common.runtime_assert(@src(), kernel.Virtual.initialized);
+    const kernel_section_allocation_size = common.align_forward(@sizeOf(kernel.Virtual.Memory.RegionWithPermissions) * pmrs.len, kernel.arch.page_size);
     const kernel_section_allocation = kernel.address_space.allocate(kernel_section_allocation_size) orelse return Error.pmrs;
     const kernel_sections = kernel_section_allocation.access([*]kernel.Virtual.Memory.RegionWithPermissions)[0..pmrs.len];
 
     for (pmrs) |pmr, i| {
         const kernel_section = &kernel_sections[i];
-        kernel_section.descriptor.address = kernel.Virtual.Address.new(pmr.address);
+        kernel_section.descriptor.address = VirtualAddress.new(pmr.address);
         kernel_section.descriptor.size = pmr.size;
         const permissions = pmr.permissions;
         kernel_section.read = permissions & (1 << stivale.Struct.PMRs.PMR.readable) != 0;
@@ -228,31 +229,31 @@ pub fn get_pmrs(stivale2_struct: *Struct) []Struct.PMRs.PMR {
 
 /// This procedure copies the kernel file in a region which is usable and whose allocationcan be registered in the physical allocator bitset
 pub fn process_kernel_file(stivale2_struct: *Struct) Error!kernel.File {
-    kernel.assert(@src(), kernel.Virtual.initialized);
+    common.runtime_assert(@src(), kernel.Virtual.initialized);
     const kernel_file = find(stivale.Struct.KernelFileV2, stivale2_struct) orelse return Error.kernel_file;
-    const file_address = kernel.Physical.Address.new(kernel_file.kernel_file);
+    const file_address = PhysicalAddress.new(kernel_file.kernel_file);
     const file_size = kernel_file.kernel_size;
-    const allocation = kernel.address_space.allocate(kernel.align_forward(file_size, kernel.arch.page_size)) orelse return Error.kernel_file;
+    const allocation = kernel.address_space.allocate(common.align_forward(file_size, kernel.arch.page_size)) orelse return Error.kernel_file;
     const dst = allocation.access([*]u8)[0..file_size];
     const src = file_address.access_higher_half([*]u8)[0..file_size];
     log.debug("Copying kernel file to (0x{x}, 0x{x})", .{ @ptrToInt(dst.ptr), @ptrToInt(dst.ptr) + dst.len });
-    kernel.copy(u8, dst, src);
+    common.copy(u8, dst, src);
     return kernel.File{
         .address = allocation,
         .size = file_size,
     };
 }
 
-pub fn process_rsdp(stivale2_struct: *Struct) Error!kernel.Physical.Address {
+pub fn process_rsdp(stivale2_struct: *Struct) Error!PhysicalAddress {
     const rsdp_struct = find(stivale.Struct.RSDP, stivale2_struct) orelse return Error.rsdp;
     const rsdp = rsdp_struct.rsdp;
     log.debug("RSDP struct: 0x{x}", .{rsdp});
-    const rsdp_address = kernel.Physical.Address.new(rsdp);
+    const rsdp_address = PhysicalAddress.new(rsdp);
     return rsdp_address;
 }
 
 pub fn process_smp(stivale2_struct: *Struct) Error![]kernel.arch.CPU {
-    kernel.assert(@src(), kernel.Virtual.initialized);
+    common.runtime_assert(@src(), kernel.Virtual.initialized);
     const smp_struct = find(stivale.Struct.SMP, stivale2_struct) orelse return Error.smp;
     log.debug("SMP struct: {}", .{smp_struct});
 
@@ -260,7 +261,7 @@ pub fn process_smp(stivale2_struct: *Struct) Error![]kernel.arch.CPU {
     const allocation = kernel.Physical.Memory.allocate_pages(page_count) orelse return Error.smp;
     const cpus = allocation.access_higher_half([*]kernel.arch.CPU)[0..smp_struct.cpu_count];
     const smps = smp_struct.smp_info()[0..smp_struct.cpu_count];
-    kernel.assert(@src(), smps[0].lapic_id == smp_struct.bsp_lapic_id);
+    common.runtime_assert(@src(), smps[0].lapic_id == smp_struct.bsp_lapic_id);
     cpus[0].is_bootstrap = true;
 
     for (smps) |smp, cpu_index| {

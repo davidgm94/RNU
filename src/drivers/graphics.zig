@@ -44,8 +44,8 @@ pub fn draw_string(driver: *Driver, color: Color, string: []const u8) void {
     }
 }
 pub fn draw_horizontal_line(driver: *Driver, line: Line, color: Color) void {
-    kernel.assert(@src(), line.start.y == line.end.y);
-    kernel.assert(@src(), line.start.x < line.end.x);
+    common.runtime_assert(@src(), line.start.y == line.end.y);
+    common.runtime_assert(@src(), line.start.x < line.end.x);
     const length = line.end.x - line.start.x;
     const start_i = line.start.x + (line.start.y * driver.framebuffer.width);
     for (driver.framebuffer.buffer[start_i .. start_i + length]) |*pixel| {

@@ -3,6 +3,9 @@ const common = kernel.common;
 const Virtual = @This();
 const Physical = kernel.Physical;
 const log = common.log.scoped(.Virtual);
+const PhysicalAddress = common.PhysicalAddress;
+const VirtualAddress = common.VirtualAddress;
+
 pub const Memory = @import("virtual_memory.zig");
 
 pub var initialized = false;
@@ -36,14 +39,14 @@ pub const AddressSpace = struct {
     }
 
     // TODO: manage virtual memory
-    pub inline fn allocate(address_space: *AddressSpace, size: u64) ?Virtual.Address {
+    pub inline fn allocate(address_space: *AddressSpace, size: u64) ?VirtualAddress {
         _ = address_space;
         const page_count = kernel.bytes_to_pages(size, .must_be_exact);
         const physical_address = kernel.Physical.Memory.allocate_pages(page_count) orelse return null;
         return physical_address.to_higher_half_virtual_address();
     }
 
-    pub inline fn allocate_and_map(address_space: *AddressSpace, size: u64, flags: Flags) ?Virtual.Address {
+    pub inline fn allocate_and_map(address_space: *AddressSpace, size: u64, flags: Flags) ?VirtualAddress {
         _ = address_space;
         const page_count = kernel.bytes_to_pages(size, .must_be_exact);
         const physical_address = kernel.Physical.Memory.allocate_pages(page_count) orelse return null;
@@ -55,17 +58,17 @@ pub const AddressSpace = struct {
         return virtual_address;
     }
 
-    pub inline fn translate_address(address_space: *AddressSpace, virtual_address: Virtual.Address) ?Physical.Address {
+    pub inline fn translate_address(address_space: *AddressSpace, virtual_address: VirtualAddress) ?PhysicalAddress {
         return address_space.arch.translate_address(virtual_address);
     }
 
-    pub inline fn map(address_space: *AddressSpace, physical_address: Physical.Address, virtual_address: Virtual.Address, flags: Flags) void {
+    pub inline fn map(address_space: *AddressSpace, physical_address: PhysicalAddress, virtual_address: VirtualAddress, flags: Flags) void {
         address_space.arch.map(physical_address, virtual_address, flags);
         const checked_physical_address = address_space.translate_address(virtual_address) orelse @panic("mapping failed");
-        kernel.assert(@src(), checked_physical_address.value == physical_address.value);
+        common.runtime_assert(@src(), checked_physical_address.value == physical_address.value);
     }
 
-    pub const Flags = kernel.Bitflag(true, enum(u64) {
+    pub const Flags = common.Bitflag(true, enum(u64) {
         read_write = 1,
         user = 2,
         write_through = 3,
@@ -85,8 +88,8 @@ pub const AddressSpace = struct {
         region_allocation_failed,
     };
 
-    pub fn integrate_mapped_physical_entry(address_space: *AddressSpace, entry: kernel.Physical.Memory.Map.Entry, base_virtual_address: Virtual.Address) !void {
-        kernel.assert(@src(), entry.descriptor.size != 0);
+    pub fn integrate_mapped_physical_entry(address_space: *AddressSpace, entry: kernel.Physical.Memory.Map.Entry, base_virtual_address: VirtualAddress) !void {
+        common.runtime_assert(@src(), entry.descriptor.size != 0);
         //log.debug("Integrating (0x{x}, {}) into 0x{x}", .{ entry.descriptor.address.value, entry.descriptor.size, base_virtual_address.value });
 
         if (entry.descriptor.size != entry.allocated_size) {
@@ -95,13 +98,13 @@ pub const AddressSpace = struct {
             //log.debug("Allocating free region", .{});
             const free_region = kernel.core_heap.allocator.create(Virtual.Memory.Region) catch return IntegrationError.region_allocation_failed;
             //log.debug("Allocated free region", .{});
-            free_region.* = Virtual.Memory.Region.new(Virtual.Address.new(free_region_offset), free_region_size);
+            free_region.* = Virtual.Memory.Region.new(VirtualAddress.new(free_region_offset), free_region_size);
             //log.debug("Free region: (0x{x}, {})", .{ free_region.address.value, free_region.size });
 
             var result = address_space.free_regions_by_address.insert(&free_region.item_address, free_region, free_region.address.value, .panic);
-            kernel.assert(@src(), result);
+            common.runtime_assert(@src(), result);
             result = address_space.free_regions_by_size.insert(&free_region.item_size, free_region, free_region.size, .allow);
-            kernel.assert(@src(), result);
+            common.runtime_assert(@src(), result);
         }
 
         if (entry.allocated_size > 0) {
@@ -112,14 +115,14 @@ pub const AddressSpace = struct {
             used_region.used = true;
             //log.debug("Used region: (0x{x}, {})", .{ used_region.address.value, used_region.size });
 
-            kernel.assert(@src(), used_region.address.value != 0);
+            common.runtime_assert(@src(), used_region.address.value != 0);
             const result = address_space.used_regions.insert(&used_region.item_address, used_region, used_region.address.value, .panic);
-            kernel.assert(@src(), result);
+            common.runtime_assert(@src(), result);
         }
     }
 
-    pub fn integrate_mapped_physical_region(address_space: *AddressSpace, region: kernel.Physical.Memory.Region, base_virtual_address: Virtual.Address) !void {
-        kernel.assert(@src(), region.size != 0);
+    pub fn integrate_mapped_physical_region(address_space: *AddressSpace, region: kernel.Physical.Memory.Region, base_virtual_address: VirtualAddress) !void {
+        common.runtime_assert(@src(), region.size != 0);
         log.debug("region size: {}", .{region.size});
 
         const used_region = kernel.core_heap.allocator.create(Virtual.Memory.Region) catch return IntegrationError.region_allocation_failed;
@@ -127,8 +130,8 @@ pub const AddressSpace = struct {
         used_region.used = true;
         log.debug("Used region: (0x{x}, {})", .{ used_region.address.value, used_region.size });
 
-        kernel.assert(@src(), used_region.address.value != 0);
+        common.runtime_assert(@src(), used_region.address.value != 0);
         const result = address_space.used_regions.insert(&used_region.item_address, used_region, used_region.address.value, .panic);
-        kernel.assert(@src(), result);
+        common.runtime_assert(@src(), result);
     }
 };

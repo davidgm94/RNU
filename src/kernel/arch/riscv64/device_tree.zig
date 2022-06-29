@@ -1,12 +1,11 @@
-const std = @import("std");
 const kernel = @import("root");
-const assert = kernel.assert;
+const common = @import("common");
+const assert = common.runtime_assert;
 const TODO = kernel.TODO;
-const align_forward = kernel.align_forward;
+const align_forward = common.align_forward;
 const string_eq = kernel.string_eq;
 const starts_with = kernel.string_starts_with;
 const ends_with = kernel.string_ends_with;
-const read_big_endian = std.mem.readIntSliceBig;
 const page_size = kernel.arch.page_size;
 const Memory = kernel.Memory;
 
@@ -59,7 +58,7 @@ pub fn find_property(self: *@This(), main_node: []const u8, property_name: []con
                     const intermediate_search_type = intermediate_search_types[i];
                     last_node = parser.find_node_from_current_offset(node, intermediate_search_type) != null;
                 }
-                kernel.assert(@src(), last_node);
+                common.runtime_assert(@src(), last_node);
                 return parser.find_property_in_current_node(property_name);
             }
         } else {
@@ -111,7 +110,7 @@ const Header = struct {
         var device_tree_it_bytes = @ptrCast([*]u32, &device_tree_header);
 
         for (device_tree_it_bytes[0 .. @sizeOf(DeviceTree.Header) / @sizeOf(u32)]) |*device_tree_n| {
-            device_tree_n.* = read_big_endian(u32, bytes_it);
+            device_tree_n.* = common.read_big_endian(u32, bytes_it);
             bytes_it.ptr += @sizeOf(u32);
             bytes_it.len -= @sizeOf(u32);
         }
@@ -137,9 +136,9 @@ const MemoryReservationBlock = struct {
 
         while (true) {
             var entry: Entry = undefined;
-            entry.address = read_big_endian(u64, block_it[0..@sizeOf(u64)]);
+            entry.address = common.read_big_endian(u64, block_it[0..@sizeOf(u64)]);
             block_it += @sizeOf(u64);
-            entry.size = read_big_endian(u64, block_it[0..@sizeOf(u64)]);
+            entry.size = common.read_big_endian(u64, block_it[0..@sizeOf(u64)]);
             block_it += @sizeOf(u64);
 
             if (entry.address == 0 and entry.size == 0) break;
@@ -596,7 +595,7 @@ const StructureBlock = struct {
         }
 
         fn skip_cstr(self: *@This()) void {
-            const len = std.mem.len(@ptrCast([*:0]const u8, self.slice[self.i..].ptr));
+            const len = common.length(@ptrCast([*:0]const u8, self.slice[self.i..].ptr));
             self.i = align_to_u32(self.i + len + 1);
         }
 
@@ -617,12 +616,12 @@ const StructureBlock = struct {
             const strings_offset = self.device_tree.header.device_tree_strings_offset;
             const string_offset = self.device_tree.base_address + strings_offset + descriptor.name_offset;
             const property_key_cstr = @intToPtr([*:0]u8, string_offset);
-            const value = property_key_cstr[0..std.mem.len(property_key_cstr)];
+            const value = property_key_cstr[0..common.length(property_key_cstr)];
             return value;
         }
 
         fn read_cstr_advancing_it(self: *@This()) []const u8 {
-            const cstr_len = std.mem.len(@ptrCast([*:0]const u8, self.slice[self.i..].ptr));
+            const cstr_len = common.length(@ptrCast([*:0]const u8, self.slice[self.i..].ptr));
             const cstr = self.slice[self.i .. self.i + cstr_len];
             self.i += cstr_len + 1;
             return cstr;
@@ -637,7 +636,7 @@ const StructureBlock = struct {
         }
 
         fn parse_int(self: *@This(), comptime Int: type) Int {
-            const int = read_big_endian(Int, self.slice[self.i..]);
+            const int = common.read_big_endian(Int, self.slice[self.i..]);
             self.i += @sizeOf(Int);
             return int;
         }

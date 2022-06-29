@@ -1,6 +1,8 @@
 const kernel = @import("root");
-const Interrupt = @import("interrupts.zig");
-const DescriptorTable = @import("descriptor_table.zig");
+const common = @import("common");
+const x86_64 = kernel.arch.x86_64;
+const Interrupt = x86_64.interrupts;
+const DescriptorTable = x86_64.DescriptorTable;
 const IDT = @This();
 
 const log = common.log.scoped(.IDT);

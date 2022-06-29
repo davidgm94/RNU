@@ -12,9 +12,9 @@ pub const PCI = @import("drivers/pci.zig");
 pub fn Driver(comptime Generic: type, comptime Specific: type) type {
     // TODO: improve safety
     const child_fields = common.fields(Specific);
-    common.static_assert(child_fields.len > 0);
+    common.comptime_assert(child_fields.len > 0);
     const first_field = child_fields[0];
-    common.static_assert(first_field.field_type == Generic);
+    common.comptime_assert(first_field.field_type == Generic);
 
     return struct {
         const log = common.log.scoped(.DriverInitialization);

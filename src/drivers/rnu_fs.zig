@@ -44,7 +44,7 @@ pub fn seek_file(fs_driver: *Filesystem, name: []const u8) ?SeekResult {
     const sector_size = fs_driver.disk.sector_size;
 
     while (true) {
-        log.debug("FS driver asking read", .{});
+        log.debug("Filesystem driver asking read at sector {} for {} sectors", .{ sector, sectors_to_read_at_time });
         const sectors_read = fs_driver.disk.access(fs_driver.disk, &search_buffer, Disk.Work{
             .sector_offset = sector,
             .sector_count = sectors_to_read_at_time,
@@ -74,7 +74,7 @@ pub fn seek_file(fs_driver: *Filesystem, name: []const u8) ?SeekResult {
 }
 
 pub fn read_file(fs_driver: *Filesystem, name: []const u8) []const u8 {
-    log.debug("About to read a file...", .{});
+    log.debug("Asked file read: {s}", .{name});
     if (seek_file(fs_driver, name)) |seek_result| {
         const node_size = seek_result.node.size;
         const sector_size = fs_driver.disk.sector_size;

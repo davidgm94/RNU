@@ -2,7 +2,7 @@ const std = @import("std");
 const drivers = @import("../drivers.zig");
 const common = @import("../common.zig");
 const FS = common.FS;
-const assert = common.assert;
+const assert = common.runtime_assert;
 const Disk = drivers.Disk;
 const FSBuilder = @This();
 

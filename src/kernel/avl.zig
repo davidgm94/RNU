@@ -59,7 +59,7 @@ pub fn Tree(comptime T: type) type {
                 }
             }
 
-            var fake_root = kernel.zeroes(Item);
+            var fake_root = common.zeroes(Item);
             self.root.?.parent = &fake_root;
             fake_root.tree = self;
             fake_root.children[0] = self.root;
@@ -147,7 +147,7 @@ pub fn Tree(comptime T: type) type {
             self.validate();
             if (item.tree != self) @panic("item not in tree");
 
-            var fake_root = kernel.zeroes(Item);
+            var fake_root = common.zeroes(Item);
             self.root.?.parent = &fake_root;
             fake_root.tree = self;
             fake_root.children[0] = self.root;

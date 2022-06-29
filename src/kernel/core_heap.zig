@@ -28,16 +28,16 @@ pub fn init(heap: *Heap, address_space: *Virtual.AddressSpace) void {
 }
 
 var allocator_interface = struct {
-    vtable: kernel.Allocator.VTable = .{
-        .alloc = @ptrCast(fn alloc(heap: *anyopaque, len: usize, ptr_align: u29, len_align: u29, return_address: usize) kernel.Allocator.Error![]u8, alloc),
+    vtable: common.Allocator.VTable = .{
+        .alloc = @ptrCast(fn alloc(heap: *anyopaque, len: usize, ptr_align: u29, len_align: u29, return_address: usize) common.Allocator.Error![]u8, alloc),
         .resize = @ptrCast(fn resize(heap: *anyopaque, old_mem: []u8, old_align: u29, new_size: usize, len_align: u29, return_address: usize) ?usize, resize),
         .free = @ptrCast(fn free(heap: *anyopaque, old_mem: []u8, old_align: u29, return_address: usize) void, free),
     },
 
-    fn alloc(heap: *Heap, size: usize, ptr_align: u29, len_align: u29, return_address: usize) kernel.Allocator.Error![]u8 {
+    fn alloc(heap: *Heap, size: usize, ptr_align: u29, len_align: u29, return_address: usize) common.Allocator.Error![]u8 {
         heap.lock.acquire();
         defer heap.lock.release();
-        kernel.assert(@src(), size < region_size);
+        common.runtime_assert(@src(), size < region_size);
 
         log.debug("Asked allocation: Size: {}. Pointer alignment: {}. Length alignment: {}. Return address: 0x{x}", .{ size, ptr_align, len_align, return_address });
         var alignment: u64 = len_align;
@@ -46,12 +46,12 @@ var allocator_interface = struct {
         const region = blk: {
             for (heap.regions) |*region| {
                 if (region.size > 0) {
-                    region.allocated = kernel.align_forward(region.allocated, alignment);
-                    kernel.assert(@src(), (region.size - region.allocated) >= size);
+                    region.allocated = common.align_forward(region.allocated, alignment);
+                    common.runtime_assert(@src(), (region.size - region.allocated) >= size);
                     break :blk region;
                 } else {
                     log.debug("have to allocate region", .{});
-                    const virtual_address = heap.address_space.allocate(region_size) orelse return kernel.Allocator.Error.OutOfMemory;
+                    const virtual_address = heap.address_space.allocate(region_size) orelse return common.Allocator.Error.OutOfMemory;
 
                     region.* = Region{
                         .virtual = virtual_address,

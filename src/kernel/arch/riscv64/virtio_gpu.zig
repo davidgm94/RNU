@@ -85,7 +85,7 @@ const AttachBackingDescriptor = struct {
 fn attach_backing(driver: *Driver) void {
     const framebuffer_pixel_count = driver.pmode.rect.width * driver.pmode.rect.height;
     const framebuffer_size = @sizeOf(u32) * framebuffer_pixel_count;
-    const framebuffer_allocation = kernel.heap.allocate(framebuffer_size, true, true) orelse @panic("unable to allocate framebuffer");
+    const framebuffer_allocation = kernel.core_heap.allocate(framebuffer_size, true, true) orelse @panic("unable to allocate framebuffer");
 
     driver.graphics.framebuffer = Graphics.Framebuffer{
         .buffer = @intToPtr([*]u32, framebuffer_allocation.virtual),
@@ -96,7 +96,7 @@ fn attach_backing(driver: *Driver) void {
 
     log.debug("New framebuffer address: 0x{x}", .{@ptrToInt(driver.graphics.framebuffer.buffer)});
 
-    const backing_allocation = kernel.heap.allocate(@sizeOf(AttachBackingDescriptor), true, true) orelse @panic("unable to allocate backing");
+    const backing_allocation = kernel.core_heap.allocate(@sizeOf(AttachBackingDescriptor), true, true) orelse @panic("unable to allocate backing");
     const backing_descriptor = @intToPtr(*volatile AttachBackingDescriptor, backing_allocation.virtual);
     backing_descriptor.* = AttachBackingDescriptor{ .attach = ResourceAttachBacking{
         .header = ControlHeader{
@@ -119,7 +119,7 @@ fn attach_backing(driver: *Driver) void {
 }
 
 fn set_scanout(driver: *Driver) void {
-    var set_scanout_descriptor = kernel.zeroes(SetScanout);
+    var set_scanout_descriptor = common.zeroes(SetScanout);
     set_scanout_descriptor.header.type = ControlType.cmd_set_scanout;
     set_scanout_descriptor.rect = driver.pmode.rect;
     set_scanout_descriptor.resource_id = driver.framebuffer_id;
@@ -128,7 +128,7 @@ fn set_scanout(driver: *Driver) void {
 }
 
 fn create_resource_2d(driver: *Driver) void {
-    var create = kernel.zeroes(ResourceCreate2D);
+    var create = common.zeroes(ResourceCreate2D);
     create.header.type = ControlType.cmd_resource_create_2d;
     create.format = Format.R8G8B8A8_UNORM;
     driver.framebuffer_id +%= 1;
@@ -150,8 +150,8 @@ fn pending_operations_handler() void {
     //const interrupt_status = driver.mmio.interrupt_status;
     //log.debug("Interrupt status: {}", .{interrupt_status});
     const old = driver.pmode;
-    common.assert(@src(), old.rect.width == driver.graphics.framebuffer.width);
-    common.assert(@src(), old.rect.height == driver.graphics.framebuffer.height);
+    common.runtime_assert(@src(), old.rect.width == driver.graphics.framebuffer.width);
+    common.runtime_assert(@src(), old.rect.height == driver.graphics.framebuffer.height);
     driver.request_display_info();
     const new = driver.pmode;
     log.debug("Old: {}, {}. New: {}, {}", .{ old.rect.width, old.rect.height, new.rect.width, new.rect.height });
@@ -162,8 +162,8 @@ fn pending_operations_handler() void {
 }
 
 fn request_display_info(driver: *Driver) void {
-    common.assert(@src(), driver.pending_display_info_request);
-    var header = kernel.zeroes(ControlHeader);
+    common.runtime_assert(@src(), driver.pending_display_info_request);
+    var header = common.zeroes(ControlHeader);
     header.type = ControlType.cmd_get_display_info;
 
     driver.send_request_and_wait(header, ResponseDisplayInfo);
@@ -172,7 +172,7 @@ fn request_display_info(driver: *Driver) void {
 }
 
 fn transfer_to_host(driver: *Driver) void {
-    var transfer_to_host_descriptor = kernel.zeroes(TransferControlToHost2D);
+    var transfer_to_host_descriptor = common.zeroes(TransferControlToHost2D);
     transfer_to_host_descriptor.header.type = ControlType.cmd_transfer_to_host_2d;
     transfer_to_host_descriptor.rect = driver.pmode.rect;
     transfer_to_host_descriptor.resource_id = driver.framebuffer_id;
@@ -181,7 +181,7 @@ fn transfer_to_host(driver: *Driver) void {
 }
 
 fn flush(driver: *Driver) void {
-    var flush_operation = kernel.zeroes(ResourceFlush);
+    var flush_operation = common.zeroes(ResourceFlush);
     flush_operation.header.type = ControlType.cmd_resource_flush;
     flush_operation.rect = driver.pmode.rect;
     flush_operation.resource_id = driver.framebuffer_id;
@@ -198,7 +198,7 @@ const Configuration = struct {
     reserved: u32,
 };
 
-const Event = kernel.Bitflag(true, enum(u32) {
+const Event = common.Bitflag(true, enum(u32) {
     display = 0,
 });
 
@@ -241,7 +241,7 @@ const ControlType = enum(u32) {
     resp_err_invalid_parameter,
 
     fn get_request_counter_index(control_type: ControlType) u64 {
-        common.assert(@src(), @enumToInt(control_type) < @enumToInt(ControlType.cmd_update_cursor));
+        common.runtime_assert(@src(), @enumToInt(control_type) < @enumToInt(ControlType.cmd_update_cursor));
         return @enumToInt(control_type) - @enumToInt(ControlType.cmd_get_display_info);
     }
 };
@@ -345,14 +345,14 @@ pub fn send_and_flush_framebuffer(driver: *Driver) void {
 }
 
 pub fn operate(driver: *Driver, request_bytes: []const u8, response_size: u32) void {
-    const request = kernel.heap.allocate(request_bytes.len, true, true) orelse @panic("unable to allocate memory for gpu request");
-    kernel.copy(u8, @intToPtr([*]u8, request.virtual)[0..request_bytes.len], request_bytes);
+    const request = kernel.core_heap.allocate(request_bytes.len, true, true) orelse @panic("unable to allocate memory for gpu request");
+    common.copy(u8, @intToPtr([*]u8, request.virtual)[0..request_bytes.len], request_bytes);
 
     var descriptor1: u16 = 0;
     var descriptor2: u16 = 0;
 
     driver.control_queue.push_descriptor(&descriptor2).* = Descriptor{
-        .address = (kernel.heap.allocate(response_size, true, true) orelse @panic("unable to get memory for gpu response")).physical,
+        .address = (kernel.core_heap.allocate(response_size, true, true) orelse @panic("unable to get memory for gpu response")).physical,
         .flags = @enumToInt(Descriptor.Flag.write_only),
         .length = response_size,
         .next = 0,

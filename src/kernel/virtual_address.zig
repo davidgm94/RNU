@@ -13,8 +13,8 @@ pub inline fn access(virtual_address: VirtualAddress, comptime Ptr: type) Ptr {
     return @intToPtr(Ptr, virtual_address.value);
 }
 
-pub inline fn identity_physical_address(virtual_address: VirtualAddress) Physical.Address {
-    return Physical.Address.new(virtual_address.value);
+pub inline fn identity_physical_address(virtual_address: VirtualAddress) PhysicalAddress {
+    return PhysicalAddress.new(virtual_address.value);
 }
 
 pub inline fn page_up(virtual_address: *VirtualAddress, comptime page_size: u64) void {

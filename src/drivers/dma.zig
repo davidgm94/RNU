@@ -23,7 +23,7 @@ pub fn new(allocator: drivers.Allocator, initialization: Initialization) !Buffer
     _ = allocation_slice;
     unreachable;
     //return Buffer{
-    //.address = Virtual.Address.new(@ptrToInt(allocation_slice.ptr)),
+    //.address = VirtualAddress.new(@ptrToInt(allocation_slice.ptr)),
     //.total_size = initialization.size,
     //.completed_size = 0,
     //};
@@ -68,6 +68,6 @@ pub fn new(allocator: drivers.Allocator, initialization: Initialization) !Buffer
 //};
 //}
 //pub const Slice = struct {
-//address: kernel.Physical.Address,
+//address: PhysicalAddress,
 //size: u64,
 //};

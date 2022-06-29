@@ -22,7 +22,7 @@ pub const InitializationError = error{
 };
 
 //pub fn init(comptime SpecificDriver: type, comptime InitializationContext: type, comptime init_callback: fn (driver: *SpecificDriver, context: InitializationContext) InitializationError!void, context: InitializationContext) InitializationError!void {
-//const driver_allocation = kernel.heap.allocate(@sizeOf(SpecificDriver), true, true) orelse return InitializationError.allocation_failure;
+//const driver_allocation = kernel.core_heap.allocate(@sizeOf(SpecificDriver), true, true) orelse return InitializationError.allocation_failure;
 //const driver = @intToPtr(*SpecificDriver, driver_allocation.virtual);
 //init_callback(driver, context) catch |err| return err;
 
